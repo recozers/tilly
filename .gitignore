@@ -91,3 +91,9 @@ jspm_packages/
 # Temporary folders
 tmp/
 temp/
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+calendar.db

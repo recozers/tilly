@@ -1,16 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { parseEventRequest } from './claudeApi.js'
+import * as eventsApi from './eventsApi.js'
 
 const App = () => {
-  const [events, setEvents] = useState([
-    {
-      id: 1,
-      title: 'Sample Meeting',
-      start: new Date(new Date().setHours(10, 0, 0, 0)),
-      end: new Date(new Date().setHours(11, 0, 0, 0)),
-      color: '#3b82f6'
-    }
-  ])
+  const [events, setEvents] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   const [currentView, setCurrentView] = useState('timeGridWeek')
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -32,6 +27,25 @@ const App = () => {
 
   const [inputMessage, setInputMessage] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+
+  // Load events from database on component mount
+  useEffect(() => {
+    loadEvents()
+  }, [])
+
+  const loadEvents = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+      const eventsData = await eventsApi.fetchEvents()
+      setEvents(eventsData)
+    } catch (err) {
+      console.error('Failed to load events:', err)
+      setError('Failed to load events. Please check if the server is running.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Generate time slots for the day (6 AM to 10 PM)
   const generateTimeSlots = () => {
@@ -186,25 +200,50 @@ const App = () => {
   }
 
   // Create new event
-  const createEvent = (title) => {
+  const createEvent = async (title) => {
     if (!title.trim() || !newEventData) return
 
-    const newEvent = {
-      id: Date.now(),
-      title: title.trim(),
-      start: newEventData.start,
-      end: newEventData.end,
-      color: '#10b981'
-    }
+    try {
+      const newEvent = await eventsApi.createEvent({
+        title: title.trim(),
+        start: newEventData.start,
+        end: newEventData.end,
+        color: '#10b981'
+      })
 
-    setEvents(prev => [...prev, newEvent])
-    setIsCreatingEvent(false)
-    setNewEventData(null)
+      setEvents(prev => [...prev, newEvent])
+      setIsCreatingEvent(false)
+      setNewEventData(null)
+    } catch (error) {
+      console.error('Failed to create event:', error)
+      setError('Failed to create event. Please try again.')
+    }
   }
 
   // Delete event
-  const deleteEvent = (eventId) => {
-    setEvents(prev => prev.filter(e => e.id !== eventId))
+  const deleteEvent = async (eventId) => {
+    try {
+      await eventsApi.deleteEvent(eventId)
+      setEvents(prev => prev.filter(e => e.id !== eventId))
+    } catch (error) {
+      console.error('Failed to delete event:', error)
+      setError('Failed to delete event. Please try again.')
+    }
+  }
+
+  // Update event (for drag and drop, resize, and title editing)
+  const updateEventInDatabase = async (eventId, updatedData) => {
+    try {
+      const updatedEvent = await eventsApi.updateEvent(eventId, updatedData)
+      setEvents(prev => prev.map(e => e.id === eventId ? updatedEvent : e))
+      return updatedEvent
+    } catch (error) {
+      console.error('Failed to update event:', error)
+      setError('Failed to update event. Please try again.')
+      // Reload events to revert any optimistic updates
+      loadEvents()
+      throw error
+    }
   }
 
   // Start dragging an event
@@ -233,9 +272,7 @@ const App = () => {
     
     const newTitle = window.prompt('Edit event title:', event.title)
     if (newTitle && newTitle.trim()) {
-      setEvents(prev => prev.map(e => 
-        e.id === event.id ? { ...e, title: newTitle.trim() } : e
-      ))
+      updateEventInDatabase(event.id, { title: newTitle.trim() })
     }
   }
 
@@ -305,11 +342,7 @@ const App = () => {
         const roundedEnd = new Date(roundedStart.getTime() + duration)
         
         // Update event
-        setEvents(prev => prev.map(ev => 
-          ev.id === dragState.event.id 
-            ? { ...ev, start: roundedStart, end: roundedEnd }
-            : ev
-        ))
+        updateEventInDatabase(dragState.event.id, { start: roundedStart, end: roundedEnd })
       }
       
       else if (dragState.type === 'resize-top') {
@@ -326,11 +359,7 @@ const App = () => {
         
         const roundedStart = roundToQuarterHour(newStart)
         
-        setEvents(prev => prev.map(ev => 
-          ev.id === dragState.event.id 
-            ? { ...ev, start: roundedStart, end: newEnd }
-            : ev
-        ))
+        updateEventInDatabase(dragState.event.id, { start: roundedStart, end: newEnd })
       }
       
       else if (dragState.type === 'resize-bottom') {
@@ -347,11 +376,7 @@ const App = () => {
         
         const roundedEnd = roundToQuarterHour(finalEnd)
         
-        setEvents(prev => prev.map(ev => 
-          ev.id === dragState.event.id 
-            ? { ...ev, end: roundedEnd }
-            : ev
-        ))
+        updateEventInDatabase(dragState.event.id, { end: roundedEnd })
       }
     }
 
@@ -386,26 +411,36 @@ const App = () => {
   }
 
   // Chat functions
-  const addEventToCalendar = (eventData) => {
+  const addEventToCalendar = async (eventData) => {
     if (!eventData) return
 
-    const newEvent = {
-      id: Date.now(),
-      title: eventData.title,
-      start: new Date(eventData.start),
-      end: new Date(eventData.end),
-      color: '#f59e0b'
+    try {
+      const newEvent = await eventsApi.createEvent({
+        title: eventData.title,
+        start: new Date(eventData.start),
+        end: new Date(eventData.end),
+        color: '#f59e0b'
+      })
+      
+      setEvents(prev => [...prev, newEvent])
+      
+      const confirmationMessage = {
+        id: (Date.now() + 1).toString(),
+        text: `✅ Event added: "${eventData.title}" on ${new Date(eventData.start).toLocaleDateString()} at ${new Date(eventData.start).toLocaleTimeString()}`,
+        sender: 'bot',
+        timestamp: new Date(),
+      }
+      setMessages(currentMessages => [...currentMessages, confirmationMessage])
+    } catch (error) {
+      console.error('Failed to add event to calendar:', error)
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        text: `❌ Failed to add event. Please try again.`,
+        sender: 'bot',
+        timestamp: new Date(),
+      }
+      setMessages(currentMessages => [...currentMessages, errorMessage])
     }
-    
-    setEvents(prev => [...prev, newEvent])
-    
-    const confirmationMessage = {
-      id: (Date.now() + 1).toString(),
-      text: `✅ Event added: "${eventData.title}" on ${new Date(eventData.start).toLocaleDateString()} at ${new Date(eventData.start).toLocaleTimeString()}`,
-      sender: 'bot',
-      timestamp: new Date(),
-    }
-    setMessages(currentMessages => [...currentMessages, confirmationMessage])
   }
 
   const handleSendMessage = async () => {
@@ -528,8 +563,75 @@ const App = () => {
             >
               ›
             </button>
+            <button
+              onClick={loadEvents}
+              disabled={isLoading}
+              style={{
+                padding: '8px 12px',
+                backgroundColor: isLoading ? '#9ca3af' : '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '500',
+                cursor: isLoading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {isLoading ? '⟳' : '↻'}
+            </button>
           </div>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div style={{
+            marginBottom: '20px',
+            padding: '12px 16px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '8px',
+            color: '#dc2626',
+            fontSize: '14px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#dc2626',
+                cursor: 'pointer',
+                fontSize: '16px',
+                padding: '0 4px'
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* Loading Overlay */}
+        {isLoading && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255, 255, 255, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            fontSize: '16px',
+            color: '#6b7280'
+          }}>
+            Loading events...
+          </div>
+        )}
         
         {/* Calendar Grid */}
         <div 
@@ -745,9 +847,7 @@ const App = () => {
                               onBlur={() => {
                                 // Save the edit
                                 if (editingTitle.trim()) {
-                                  setEvents(prev => prev.map(e => 
-                                    e.id === event.id ? { ...e, title: editingTitle.trim() } : e
-                                  ))
+                                  updateEventInDatabase(event.id, { title: editingTitle.trim() })
                                 }
                                 setEditingEventId(null)
                                 setEditingTitle('')
@@ -756,9 +856,7 @@ const App = () => {
                                 if (e.key === 'Enter') {
                                   // Save on Enter
                                   if (editingTitle.trim()) {
-                                    setEvents(prev => prev.map(ev => 
-                                      ev.id === event.id ? { ...ev, title: editingTitle.trim() } : ev
-                                    ))
+                                    updateEventInDatabase(event.id, { title: editingTitle.trim() })
                                   }
                                   setEditingEventId(null)
                                   setEditingTitle('')

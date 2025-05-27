@@ -38,21 +38,26 @@ const App = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Auto-scroll calendar to 6am on initial load
+  // Auto-scroll calendar to center on current time
   useEffect(() => {
-    const scrollToSixAM = () => {
+    const scrollToCurrentTime = () => {
       const timeGrid = document.querySelector('.calendar-time-grid')
       if (timeGrid) {
-        // Find the 6:00 AM slot (12th slot: 0:00, 0:30, 1:00, 1:30, ..., 6:00)
-        const sixAMSlotIndex = 12 // 6 hours * 2 slots per hour
-        const slotHeight = getActualSlotHeight()
-        const scrollPosition = sixAMSlotIndex * slotHeight
+        const now = new Date()
+        const currentMinutes = now.getHours() * 60 + now.getMinutes()
+        const slotHeight = 60 // Use consistent value
+        const currentTimePosition = (currentMinutes / 30) * slotHeight
+        
+        // Position the current time at 25% from the top
+        const gridHeight = timeGrid.clientHeight
+        const scrollPosition = Math.max(0, currentTimePosition - (gridHeight * 0.25))
+        
         timeGrid.scrollTop = scrollPosition
       }
     }
 
     // Delay to ensure DOM is ready
-    const timer = setTimeout(scrollToSixAM, 100)
+    const timer = setTimeout(scrollToCurrentTime, 100)
     return () => clearTimeout(timer)
   }, []) // Only run on initial mount
 
@@ -65,6 +70,17 @@ const App = () => {
   useEffect(() => {
     eventsRef.current = events
   }, [events])
+
+  const [currentTime, setCurrentTime] = useState(new Date())
+
+  // Update current time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 60000) // Update every minute
+
+    return () => clearInterval(interval)
+  }, [])
 
   const loadEvents = async () => {
     try {
@@ -205,7 +221,7 @@ const App = () => {
     const slotHeight = getActualSlotHeight()
     const topOffset = ((startMinutes - calendarStartMinutes) / 30) * slotHeight
     const duration = endMinutes - startMinutes
-    const height = Math.max(30, (duration / 30) * slotHeight)
+    const height = Math.max(30, (duration / 30) * slotHeight - 10)
 
     return { top: topOffset, height }
   }
@@ -270,7 +286,7 @@ const App = () => {
         title: title.trim(),
         start: newEventData.start,
         end: newEventData.end,
-        color: '#10b981'
+        color: '#3b82f6'
       })
 
       setEvents(prev => [...prev, newEvent])
@@ -380,27 +396,37 @@ const App = () => {
       if (dragState.type === 'move') {
         // Calculate time difference based on Y movement
         const deltaY = e.clientY - dragState.startY
-        const slotHeight = getActualSlotHeight() // Use dynamic measurement
-        const deltaMinutes = (deltaY / slotHeight) * 30 // Each slot = 30 minutes
-        
-        // Calculate new start time
-        const newStart = new Date(dragState.originalStart)
-        newStart.setMinutes(newStart.getMinutes() + deltaMinutes)
-        
-        // Calculate duration and new end time
-        const duration = dragState.originalEnd - dragState.originalStart
-        const newEnd = new Date(newStart.getTime() + duration)
-        
-        // Round to nearest 15 minutes
-        const roundedStart = roundToQuarterHour(newStart)
-        const roundedEnd = new Date(roundedStart.getTime() + duration)
-        
-        // Optimistic update - only update local state, not database
-        setEvents(prev => prev.map(e => 
-          e.id === dragState.event.id 
-            ? { ...e, start: roundedStart, end: roundedEnd }
-            : e
-        ))
+        const slotHeight = getActualSlotHeight()
+        const deltaMinutes = (deltaY / slotHeight) * 30
+
+        // Calculate day difference based on X movement
+        const calendarGrid = document.querySelector('.calendar-time-grid')
+        if (calendarGrid) {
+          const rect = calendarGrid.getBoundingClientRect()
+          const columnWidth = (rect.width - 80) / 7
+          const deltaX = e.clientX - dragState.startX
+          const dayDelta = Math.round(deltaX / columnWidth)
+
+          // Calculate new start time
+          const newStart = new Date(dragState.originalStart)
+          newStart.setMinutes(newStart.getMinutes() + deltaMinutes)
+          newStart.setDate(newStart.getDate() + dayDelta)
+
+          // Calculate duration and new end time
+          const duration = dragState.originalEnd - dragState.originalStart
+          const newEnd = new Date(newStart.getTime() + duration)
+
+          // Round to nearest 15 minutes
+          const roundedStart = roundToQuarterHour(newStart)
+          const roundedEnd = new Date(roundedStart.getTime() + duration)
+
+          // Optimistic update - only update local state, not database
+          setEvents(prev => prev.map(e => 
+            e.id === dragState.event.id 
+              ? { ...e, start: roundedStart, end: roundedEnd }
+              : e
+          ))
+        }
       }
       
       else if (dragState.type === 'resize-top') {
@@ -507,28 +533,82 @@ const App = () => {
   const addEventToCalendar = async (eventData) => {
     if (!eventData) return
 
+    console.log('🔍 DEBUG: Adding AI event to calendar:', eventData)
+
     try {
+      // Shared robust time parsing function
+      const parseTimeString = (timeString, label) => {
+        console.log(`🔍 DEBUG: Parsing ${label}: "${timeString}"`)
+        
+        // If it already has 'Z', it's UTC
+        if (timeString.endsWith('Z')) {
+          const date = new Date(timeString)
+          console.log(`🔍 DEBUG: ${label} is UTC: ${date.toISOString()}`)
+          return date
+        }
+        
+        // If it doesn't have 'T', add time component
+        if (!timeString.includes('T')) {
+          timeString += 'T00:00:00'
+          console.log(`🔍 DEBUG: Added time component to ${label}: "${timeString}"`)
+        }
+        
+        // Treat as local time and convert properly
+        const localDate = new Date(timeString)
+        console.log(`🔍 DEBUG: ${label} parsed as local: ${localDate.toString()}`)
+        console.log(`🔍 DEBUG: ${label} converted to UTC: ${localDate.toISOString()}`)
+        
+        // Validate the parsed date
+        if (isNaN(localDate.getTime())) {
+          throw new Error(`Invalid ${label.toLowerCase()} time: "${timeString}"`)
+        }
+        
+        return localDate
+      }
+
+      let startTime, endTime
+      
+      try {
+        startTime = parseTimeString(eventData.start, 'Start time')
+        endTime = parseTimeString(eventData.end, 'End time')
+      } catch (parseError) {
+        console.error(`🚨 ERROR: Time parsing failed for AI event:`, parseError)
+        throw new Error(`Failed to parse event time: ${parseError.message}`)
+      }
+      
+      // Validate that start is before end
+      if (startTime >= endTime) {
+        console.error(`🚨 ERROR: Invalid time range for AI event: start (${startTime.toISOString()}) >= end (${endTime.toISOString()})`)
+        throw new Error(`Invalid time range: start time must be before end time`)
+      }
+
+      console.log(`🔍 DEBUG: Final validated AI event times:`)
+      console.log(`  Title: "${eventData.title}"`)
+      console.log(`  Start: ${startTime.toISOString()} (${startTime.toLocaleString()})`)
+      console.log(`  End: ${endTime.toISOString()} (${endTime.toLocaleString()})`)
+
       const newEvent = await eventsApi.createEvent({
         title: eventData.title,
-        start: new Date(eventData.start),
-        end: new Date(eventData.end),
-        color: '#f59e0b'
+        start: startTime,
+        end: endTime,
+        color: '#3b82f6'
       })
       
+      console.log(`🔍 DEBUG: Successfully created AI event in database:`, newEvent)
       setEvents(prev => [...prev, newEvent])
       
       const confirmationMessage = {
         id: (Date.now() + 1).toString(),
-        text: `✅ Event added: "${eventData.title}" on ${new Date(eventData.start).toLocaleDateString()} at ${new Date(eventData.start).toLocaleTimeString()}`,
+        text: `✅ Event added: "${eventData.title}" on ${startTime.toLocaleDateString()} at ${startTime.toLocaleTimeString()}`,
         sender: 'bot',
         timestamp: new Date(),
       }
       setMessages(currentMessages => [...currentMessages, confirmationMessage])
     } catch (error) {
-      console.error('Failed to add event to calendar:', error)
+      console.error('🚨 ERROR: Failed to add AI event to calendar:', error)
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: `❌ Failed to add event. Please try again.`,
+        text: `❌ Failed to add event: ${error.message || 'Unknown error'}. Please try again.`,
         sender: 'bot',
         timestamp: new Date(),
       }
@@ -544,28 +624,70 @@ const App = () => {
     try {
       // Update each event
       const updatePromises = rearrangements.map(async (rearrangement) => {
-        console.log(`🔍 DEBUG: Updating event ID ${rearrangement.eventId} (${rearrangement.currentTitle})`)
+        console.log(`🔍 DEBUG: Processing rearrangement for event ID ${rearrangement.eventId} (${rearrangement.currentTitle})`)
+        console.log(`🔍 DEBUG: Raw time strings - Start: "${rearrangement.newStart}", End: "${rearrangement.newEnd}"`)
         
-        // Convert local times to UTC properly
-        // If the time string doesn't end with 'Z', treat it as local time
-        const startTime = rearrangement.newStart.endsWith('Z') 
-          ? new Date(rearrangement.newStart)
-          : new Date(rearrangement.newStart + (rearrangement.newStart.includes('T') ? '' : 'T00:00:00'))
+        // More robust time parsing with validation
+        const parseTimeString = (timeString, label) => {
+          console.log(`🔍 DEBUG: Parsing ${label}: "${timeString}"`)
+          
+          // If it already has 'Z', it's UTC
+          if (timeString.endsWith('Z')) {
+            const date = new Date(timeString)
+            console.log(`🔍 DEBUG: ${label} is UTC: ${date.toISOString()}`)
+            return date
+          }
+          
+          // If it doesn't have 'T', add time component
+          if (!timeString.includes('T')) {
+            timeString += 'T00:00:00'
+            console.log(`🔍 DEBUG: Added time component to ${label}: "${timeString}"`)
+          }
+          
+          // Treat as local time and convert properly
+          const localDate = new Date(timeString)
+          console.log(`🔍 DEBUG: ${label} parsed as local: ${localDate.toString()}`)
+          console.log(`🔍 DEBUG: ${label} converted to UTC: ${localDate.toISOString()}`)
+          
+          // Validate the parsed date
+          if (isNaN(localDate.getTime())) {
+            throw new Error(`Invalid ${label.toLowerCase()} time: "${timeString}"`)
+          }
+          
+          return localDate
+        }
         
-        const endTime = rearrangement.newEnd.endsWith('Z')
-          ? new Date(rearrangement.newEnd) 
-          : new Date(rearrangement.newEnd + (rearrangement.newEnd.includes('T') ? '' : 'T00:00:00'))
+        let startTime, endTime
         
-        console.log(`🔍 DEBUG: Converted times - Start: ${startTime.toISOString()}, End: ${endTime.toISOString()}`)
+        try {
+          startTime = parseTimeString(rearrangement.newStart, 'Start time')
+          endTime = parseTimeString(rearrangement.newEnd, 'End time')
+        } catch (parseError) {
+          console.error(`🚨 ERROR: Time parsing failed for event ${rearrangement.eventId}:`, parseError)
+          throw new Error(`Failed to parse time for "${rearrangement.currentTitle}": ${parseError.message}`)
+        }
         
-        return await updateEventInDatabase(rearrangement.eventId, {
+        // Validate that start is before end
+        if (startTime >= endTime) {
+          console.error(`🚨 ERROR: Invalid time range for event ${rearrangement.eventId}: start (${startTime.toISOString()}) >= end (${endTime.toISOString()})`)
+          throw new Error(`Invalid time range for "${rearrangement.currentTitle}": start time must be before end time`)
+        }
+        
+        console.log(`🔍 DEBUG: Final validated times for event ${rearrangement.eventId}:`)
+        console.log(`  Start: ${startTime.toISOString()} (${startTime.toLocaleString()})`)
+        console.log(`  End: ${endTime.toISOString()} (${endTime.toLocaleString()})`)
+        
+        const result = await updateEventInDatabase(rearrangement.eventId, {
           start: startTime,
           end: endTime
         })
+        
+        console.log(`🔍 DEBUG: Successfully updated event ${rearrangement.eventId} in database`)
+        return result
       })
 
       const updatedEvents = await Promise.all(updatePromises)
-      console.log('🔍 DEBUG: Updated events from database:', updatedEvents)
+      console.log('🔍 DEBUG: All events updated successfully:', updatedEvents.map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end })))
       
       // Update local state with all the updated events
       setEvents(prev => {
@@ -583,10 +705,10 @@ const App = () => {
       }
       setMessages(currentMessages => [...currentMessages, confirmationMessage])
     } catch (error) {
-      console.error('Failed to rearrange events:', error)
+      console.error('🚨 ERROR: Failed to rearrange events:', error)
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: `❌ Failed to rearrange events. Please try again.`,
+        text: `❌ Failed to rearrange events: ${error.message || 'Unknown error'}. Please try again.`,
         sender: 'bot',
         timestamp: new Date(),
       }
@@ -849,6 +971,44 @@ const App = () => {
                   pointerEvents: 'none',
                   zIndex: 50
                 }}>
+                  {/* Current time indicator */}
+                  {(() => {
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    
+                    const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes()
+                    const slotHeight = getActualSlotHeight()
+                    const currentTimePosition = (currentMinutes / 30) * slotHeight
+                    
+                    // Find today's column index
+                    const todayColumnIndex = weekDates.findIndex(date => {
+                      const compareDate = new Date(date)
+                      compareDate.setHours(0, 0, 0, 0)
+                      return compareDate.getTime() === today.getTime()
+                    })
+                    
+                    // Only show if today is in the current week view
+                    if (todayColumnIndex === -1) return null
+                    
+                    const columnWidth = 100 / 7
+                    const leftPosition = (todayColumnIndex / 7) * 100
+                    
+                    return (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: `${currentTimePosition}px`,
+                          left: `${leftPosition}%`,
+                          width: `${columnWidth}%`,
+                          height: '2px',
+                          backgroundColor: '#ef4444',
+                          zIndex: 200,
+                          boxShadow: '0 0 4px rgba(239, 68, 68, 0.5)'
+                        }}
+                      />
+                    )
+                  })()}
+
                   {weekDates.map((date, dayIndex) => {
                     // Show events that overlap with this date (not just events that start on this date)
                     const dayEvents = events.filter(event => {
@@ -929,10 +1089,10 @@ const App = () => {
                                 onMouseDown={(e) => handleEventMouseDown(e, event)}
                                 style={{
                                   position: 'absolute',
-                                  top: '20px',
-                                  left: '4px',
-                                  right: '20px',
-                                  bottom: '8px',
+                                  top: '4px',
+                                  left: '2px',
+                                  right: '18px',
+                                  bottom: '6px',
                                   cursor: 'grab',
                                   zIndex: 1,
                                   backgroundColor: 'transparent'
@@ -969,6 +1129,12 @@ const App = () => {
                                   onBlur={() => {
                                     if (editingTitle.trim()) {
                                       updateEventInDatabase(event.id, { title: editingTitle.trim() })
+                                        .then(updatedEvent => {
+                                          setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
+                                        })
+                                        .catch(error => {
+                                          console.error('Failed to update title:', error)
+                                        })
                                     }
                                     setEditingEventId(null)
                                     setEditingTitle('')
@@ -977,6 +1143,12 @@ const App = () => {
                                     if (e.key === 'Enter') {
                                       if (editingTitle.trim()) {
                                         updateEventInDatabase(event.id, { title: editingTitle.trim() })
+                                          .then(updatedEvent => {
+                                            setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
+                                          })
+                                          .catch(error => {
+                                            console.error('Failed to update title:', error)
+                                          })
                                       }
                                       setEditingEventId(null)
                                       setEditingTitle('')

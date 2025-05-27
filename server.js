@@ -350,24 +350,33 @@ app.post('/api/calendar/query', async (req, res) => {
       try {
         const actionData = JSON.parse(jsonMatch[0]);
         if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement') {
-          // Extract the text part (everything before the JSON)
-          const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
-          
-          // Return both the conversational text and the structured action data
-          res.json({ 
-            response: {
-              type: actionData.type,
-              message: textPart || actionData.message,
-              eventData: actionData.eventData,
-              rearrangements: actionData.rearrangements || null
-            }, 
-            context: calendarContext 
-          });
-          return;
+          // Validate the action data before sending to frontend
+          const validationResult = validateActionData(actionData);
+          if (!validationResult.valid) {
+            console.warn('Claude response validation failed:', validationResult.error);
+            console.warn('Original Claude response:', claudeResponse);
+            // Fall through to regular text response if validation fails
+          } else {
+            // Extract the text part (everything before the JSON)
+            const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
+            
+            // Return both the conversational text and the structured action data
+            res.json({ 
+              response: {
+                type: actionData.type,
+                message: textPart || actionData.message,
+                eventData: actionData.eventData,
+                rearrangements: actionData.rearrangements || null
+              }, 
+              context: calendarContext 
+            });
+            return;
+          }
         }
       } catch (e) {
         // JSON parsing failed, treat as regular text
         console.warn('Failed to parse JSON from Claude response:', e.message);
+        console.warn('Original Claude response:', claudeResponse);
       }
     }
     
@@ -378,6 +387,126 @@ app.post('/api/calendar/query', async (req, res) => {
     res.status(500).json({ error: 'Failed to process calendar query' });
   }
 });
+
+// Validate Claude's action data to prevent time parsing issues
+function validateActionData(actionData) {
+  try {
+    console.log('🔍 Validating Claude action data:', actionData);
+    
+    if (actionData.type === 'event_suggestion') {
+      if (!actionData.eventData) {
+        return { valid: false, error: 'Missing eventData for event_suggestion' };
+      }
+      
+      const { title, start, end } = actionData.eventData;
+      
+      if (!title || typeof title !== 'string' || title.trim() === '') {
+        return { valid: false, error: 'Invalid or missing event title' };
+      }
+      
+      if (!start || typeof start !== 'string') {
+        return { valid: false, error: 'Invalid or missing start time' };
+      }
+      
+      if (!end || typeof end !== 'string') {
+        return { valid: false, error: 'Invalid or missing end time' };
+      }
+      
+      // Validate time format (should be ISO format without Z for local time)
+      const timeFormatRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+      if (!timeFormatRegex.test(start)) {
+        return { valid: false, error: `Invalid start time format: "${start}". Expected format: YYYY-MM-DDTHH:mm:ss` };
+      }
+      
+      if (!timeFormatRegex.test(end)) {
+        return { valid: false, error: `Invalid end time format: "${end}". Expected format: YYYY-MM-DDTHH:mm:ss` };
+      }
+      
+      // Validate that times can be parsed
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      
+      if (isNaN(startDate.getTime())) {
+        return { valid: false, error: `Invalid start time value: "${start}"` };
+      }
+      
+      if (isNaN(endDate.getTime())) {
+        return { valid: false, error: `Invalid end time value: "${end}"` };
+      }
+      
+      if (startDate >= endDate) {
+        return { valid: false, error: `Start time (${start}) must be before end time (${end})` };
+      }
+      
+      console.log('✅ Event suggestion validation passed');
+      return { valid: true };
+    }
+    
+    if (actionData.type === 'event_rearrangement') {
+      if (!actionData.rearrangements || !Array.isArray(actionData.rearrangements)) {
+        return { valid: false, error: 'Missing or invalid rearrangements array' };
+      }
+      
+      if (actionData.rearrangements.length === 0) {
+        return { valid: false, error: 'Empty rearrangements array' };
+      }
+      
+      for (let i = 0; i < actionData.rearrangements.length; i++) {
+        const rearrangement = actionData.rearrangements[i];
+        
+        if (!rearrangement.eventId || typeof rearrangement.eventId !== 'number') {
+          return { valid: false, error: `Invalid eventId in rearrangement ${i}: ${rearrangement.eventId}` };
+        }
+        
+        if (!rearrangement.currentTitle || typeof rearrangement.currentTitle !== 'string') {
+          return { valid: false, error: `Invalid currentTitle in rearrangement ${i}` };
+        }
+        
+        if (!rearrangement.newStart || typeof rearrangement.newStart !== 'string') {
+          return { valid: false, error: `Invalid newStart in rearrangement ${i}` };
+        }
+        
+        if (!rearrangement.newEnd || typeof rearrangement.newEnd !== 'string') {
+          return { valid: false, error: `Invalid newEnd in rearrangement ${i}` };
+        }
+        
+        // Validate time format
+        const timeFormatRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+        if (!timeFormatRegex.test(rearrangement.newStart)) {
+          return { valid: false, error: `Invalid newStart format in rearrangement ${i}: "${rearrangement.newStart}"` };
+        }
+        
+        if (!timeFormatRegex.test(rearrangement.newEnd)) {
+          return { valid: false, error: `Invalid newEnd format in rearrangement ${i}: "${rearrangement.newEnd}"` };
+        }
+        
+        // Validate that times can be parsed
+        const startDate = new Date(rearrangement.newStart);
+        const endDate = new Date(rearrangement.newEnd);
+        
+        if (isNaN(startDate.getTime())) {
+          return { valid: false, error: `Invalid newStart value in rearrangement ${i}: "${rearrangement.newStart}"` };
+        }
+        
+        if (isNaN(endDate.getTime())) {
+          return { valid: false, error: `Invalid newEnd value in rearrangement ${i}: "${rearrangement.newEnd}"` };
+        }
+        
+        if (startDate >= endDate) {
+          return { valid: false, error: `Start time must be before end time in rearrangement ${i}` };
+        }
+      }
+      
+      console.log('✅ Event rearrangement validation passed');
+      return { valid: true };
+    }
+    
+    return { valid: false, error: `Unknown action type: ${actionData.type}` };
+  } catch (error) {
+    console.error('🚨 Error during validation:', error);
+    return { valid: false, error: `Validation error: ${error.message}` };
+  }
+}
 
 // Create a well-engineered prompt for Claude
 function createCalendarPrompt(query, context) {
@@ -489,6 +618,7 @@ Example for rearrangement:
    - Default to 1 hour duration if not specified
    - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
    - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
+   - CRITICAL: Double-check your time arithmetic. If you calculate "11:30 AM + 3 hours = 2:30 PM", make sure your JSON shows "14:30:00" not "02:30:00"
 
 7. For event rearrangement:
    - Identify which existing event the user wants to move
@@ -499,6 +629,8 @@ Example for rearrangement:
    - EXAMPLE: If user asks to modify "Flight Home", find "[ID:5] Flight Home" in the context and use eventId: 5
    - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
    - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
+   - CRITICAL: Verify your time calculations. When moving events, ensure start and end times are both correctly calculated
+   - EXAMPLE: If moving a 30-minute event from 11:30 AM to 3:30 PM, JSON should show start: "2025-05-27T15:30:00", end: "2025-05-27T16:00:00"
 
 8. Be natural and conversational while providing accurate calendar information. Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
 

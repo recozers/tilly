@@ -11,7 +11,12 @@ const {
   updateEvent,
   deleteEvent,
   getEventsByDateRange,
-  closeDatabase
+  closeDatabase,
+  searchEvents,
+  getUpcomingEvents,
+  getEventsForPeriod,
+  isTimeSlotFree,
+  getCalendarStats
 } = require('./database');
 
 const app = express();
@@ -142,27 +147,36 @@ app.put('/api/events/:id', async (req, res) => {
     const { id } = req.params;
     const { title, start, end, color } = req.body;
     
-    if (!title || !start || !end) {
-      return res.status(400).json({ error: 'Title, start, and end are required' });
+    // Get the existing event first
+    const existingEvents = await getAllEvents();
+    const existingEvent = existingEvents.find(e => e.id === parseInt(id));
+    
+    if (!existingEvent) {
+      return res.status(404).json({ error: 'Event not found' });
     }
     
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    // Use existing values if not provided in update
+    const updateData = {
+      title: title !== undefined ? title : existingEvent.title,
+      start: start !== undefined ? new Date(start) : new Date(existingEvent.start),
+      end: end !== undefined ? new Date(end) : new Date(existingEvent.end),
+      color: color !== undefined ? color : existingEvent.color
+    };
     
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return res.status(400).json({ error: 'Invalid date format' });
+    // Validate dates if they were provided
+    if (start !== undefined && isNaN(updateData.start.getTime())) {
+      return res.status(400).json({ error: 'Invalid start date format' });
     }
     
-    if (startDate >= endDate) {
+    if (end !== undefined && isNaN(updateData.end.getTime())) {
+      return res.status(400).json({ error: 'Invalid end date format' });
+    }
+    
+    if (updateData.start >= updateData.end) {
       return res.status(400).json({ error: 'Start time must be before end time' });
     }
     
-    const updatedEvent = await updateEvent(parseInt(id), {
-      title,
-      start: startDate,
-      end: endDate,
-      color: color || '#3b82f6'
-    });
+    const updatedEvent = await updateEvent(parseInt(id), updateData);
     
     console.log('Updated event:', updatedEvent);
     res.json(updatedEvent);
@@ -189,6 +203,303 @@ app.delete('/api/events/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete event' });
   }
 });
+
+// Search events
+app.get('/api/events/search', async (req, res) => {
+  try {
+    const { q: searchTerm, timeframe } = req.query;
+    
+    if (!searchTerm) {
+      return res.status(400).json({ error: 'Search term is required' });
+    }
+    
+    let timeframeObj = null;
+    if (timeframe) {
+      const [start, end] = timeframe.split(',');
+      timeframeObj = {
+        start: new Date(start),
+        end: new Date(end)
+      };
+    }
+    
+    const events = await searchEvents(searchTerm, timeframeObj);
+    res.json(events);
+  } catch (error) {
+    console.error('Error searching events:', error);
+    res.status(500).json({ error: 'Failed to search events' });
+  }
+});
+
+// Get upcoming events
+app.get('/api/events/upcoming', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const events = await getUpcomingEvents(limit);
+    res.json(events);
+  } catch (error) {
+    console.error('Error getting upcoming events:', error);
+    res.status(500).json({ error: 'Failed to get upcoming events' });
+  }
+});
+
+// Get events for specific periods
+app.get('/api/events/period/:period', async (req, res) => {
+  try {
+    const { period } = req.params;
+    const events = await getEventsForPeriod(period);
+    res.json(events);
+  } catch (error) {
+    console.error('Error getting events for period:', error);
+    res.status(500).json({ error: 'Failed to get events for period' });
+  }
+});
+
+// Check availability
+app.post('/api/events/availability', async (req, res) => {
+  try {
+    const { startTime, endTime } = req.body;
+    
+    if (!startTime || !endTime) {
+      return res.status(400).json({ error: 'Start time and end time are required' });
+    }
+    
+    const isFree = await isTimeSlotFree(new Date(startTime), new Date(endTime));
+    res.json({ isFree });
+  } catch (error) {
+    console.error('Error checking availability:', error);
+    res.status(500).json({ error: 'Failed to check availability' });
+  }
+});
+
+// Get calendar statistics
+app.get('/api/events/stats', async (req, res) => {
+  try {
+    const period = req.query.period || 'this_week';
+    const stats = await getCalendarStats(period);
+    res.json(stats);
+  } catch (error) {
+    console.error('Error getting calendar stats:', error);
+    res.status(500).json({ error: 'Failed to get calendar stats' });
+  }
+});
+
+// AI Calendar Query endpoint
+app.post('/api/calendar/query', async (req, res) => {
+  try {
+    const { query, chatHistory = [] } = req.body;
+    
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+    
+    // Get all events for context
+    const allEvents = await getAllEvents();
+    const upcomingEvents = await getUpcomingEvents(20);
+    const todayEvents = await getEventsForPeriod('today');
+    const tomorrowEvents = await getEventsForPeriod('tomorrow');
+    const thisWeekEvents = await getEventsForPeriod('this_week');
+    const stats = await getCalendarStats('this_week');
+    
+    // Create calendar context for Claude
+    const now = new Date();
+    const calendarContext = {
+      currentTime: now.toISOString(),
+      currentDate: now.toLocaleDateString(),
+      currentDay: now.toLocaleDateString('en-US', { weekday: 'long' }),
+      currentLocalTime: now.toLocaleString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      totalEvents: allEvents.length,
+      upcomingEvents: upcomingEvents.slice(0, 10),
+      todayEvents,
+      tomorrowEvents,
+      thisWeekEvents,
+      weeklyStats: stats,
+      query,
+      chatHistory
+    };
+    
+    // Use Claude API for intelligent calendar assistance
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: createCalendarPrompt(query, calendarContext)
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Claude API request failed');
+    }
+
+    const claudeData = await response.json();
+    const claudeResponse = claudeData.content[0].text;
+    
+    // Try to extract JSON from the response (could be mixed with text)
+    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement)"[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      try {
+        const actionData = JSON.parse(jsonMatch[0]);
+        if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement') {
+          // Extract the text part (everything before the JSON)
+          const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
+          
+          // Return both the conversational text and the structured action data
+          res.json({ 
+            response: {
+              type: actionData.type,
+              message: textPart || actionData.message,
+              eventData: actionData.eventData,
+              rearrangements: actionData.rearrangements || null
+            }, 
+            context: calendarContext 
+          });
+          return;
+        }
+      } catch (e) {
+        // JSON parsing failed, treat as regular text
+        console.warn('Failed to parse JSON from Claude response:', e.message);
+      }
+    }
+    
+    // Regular text response
+    res.json({ response: claudeResponse, context: calendarContext });
+  } catch (error) {
+    console.error('Error processing calendar query:', error);
+    res.status(500).json({ error: 'Failed to process calendar query' });
+  }
+});
+
+// Create a well-engineered prompt for Claude
+function createCalendarPrompt(query, context) {
+  // Format chat history for the prompt
+  const chatHistorySection = context.chatHistory && context.chatHistory.length > 0 
+    ? `
+CHAT HISTORY (Recent conversation context):
+${context.chatHistory.slice(-10).map((msg, index) => {
+  const timestamp = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  return `[${timestamp}] ${msg.sender === 'user' ? 'User' : 'Tilly'}: ${msg.text}`;
+}).join('\n')}
+` 
+    : '';
+
+  return `You are Tilly, an intelligent calendar assistant. You have full access to the user's calendar and can help with scheduling, availability, and calendar management.
+
+CURRENT CONTEXT:
+- Current local time: ${context.currentLocalTime}
+- Timezone: ${context.timezone}
+- Current date: ${context.currentDate} (${context.currentDay})
+- Total events in calendar: ${context.totalEvents}${chatHistorySection}
+
+TODAY'S EVENTS (${context.todayEvents.length}):
+${context.todayEvents.map(e => {
+  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  return `- ${e.title} from ${startTime} to ${endTime}`;
+}).join('\n') || '- No events today'}
+
+TOMORROW'S EVENTS (${context.tomorrowEvents.length}):
+${context.tomorrowEvents.map(e => {
+  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  return `- ${e.title} from ${startTime} to ${endTime}`;
+}).join('\n') || '- No events tomorrow'}
+
+UPCOMING EVENTS (${context.upcomingEvents.length}):
+${context.upcomingEvents.map(e => {
+  const date = new Date(e.start).toLocaleDateString();
+  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  return `- ${e.title} on ${date} from ${startTime} to ${endTime}`;
+}).join('\n') || '- No upcoming events'}
+
+WEEKLY STATS:
+- Total events this week: ${context.weeklyStats.totalEvents}
+- Total hours: ${context.weeklyStats.totalHours.toFixed(1)}
+- Busiest day: ${context.weeklyStats.busiestDay || 'None'}
+
+USER QUERY: "${query}"
+
+INSTRUCTIONS:
+1. Use the chat history above to maintain context and provide coherent follow-up responses. Reference previous conversations when relevant.
+
+2. For event scheduling requests, be conversational and helpful. Check for TIME CONFLICTS (overlapping time slots) - having other events on the same day is fine unless they overlap. Then end your response with a JSON object:
+
+Example for scheduling WITHOUT conflict:
+"I'd be happy to schedule that meeting for tomorrow at 6pm! I see you have a meeting from 10:30am to 11:30am, but 6pm works perfectly since there's no time overlap.
+
+{
+  "type": "event_suggestion",
+  "message": "Would you like me to add this meeting to your calendar?",
+  "eventData": {
+    "title": "Team Meeting",
+    "start": "2025-05-27T18:00:00.000Z",
+    "end": "2025-05-27T19:00:00.000Z"
+  }
+}"
+
+Example for scheduling WITH conflict:
+"I'd like to help you schedule that meeting for 2pm tomorrow, but you already have a meeting from 2:00pm to 3:00pm. How about 4pm instead?
+
+{
+  "type": "event_suggestion", 
+  "message": "Would you like me to add this meeting at 4pm to your calendar?",
+  "eventData": {
+    "title": "Team Meeting",
+    "start": "2025-05-27T16:00:00.000Z",
+    "end": "2025-05-27T17:00:00.000Z"
+  }
+}"
+
+3. For event rearrangement requests (move, reschedule, change time), suggest moving existing events:
+
+Example for rearrangement:
+"I can help you move that meeting! Let me reschedule your 'Team Meeting' from 2pm to 4pm tomorrow.
+
+{
+  "type": "event_rearrangement",
+  "message": "Would you like me to move this meeting to the new time?",
+  "rearrangements": [
+    {
+      "eventId": 2,
+      "currentTitle": "Team Meeting",
+      "newStart": "2025-05-27T16:00:00.000Z",
+      "newEnd": "2025-05-27T17:00:00.000Z"
+    }
+  ]
+}"
+
+4. For all other queries (availability, upcoming events, summaries, etc.), respond with helpful conversational text only.
+
+5. IMPORTANT: A scheduling conflict only occurs when the proposed time OVERLAPS with an existing event. Multiple events on the same day are perfectly fine if they don't overlap in time.
+
+6. For event scheduling:
+   - Parse natural language to extract event title, date, and time
+   - Check for ACTUAL time conflicts (overlapping periods), not just same-day events
+   - Only suggest alternative times if there are real overlapping conflicts
+   - Default to 1 hour duration if not specified
+   - When creating JSON, convert local times to UTC using the timezone: ${context.timezone}
+   - Show times to user in local format but store in UTC in the JSON
+
+7. For event rearrangement:
+   - Identify which existing event the user wants to move
+   - Use the event ID from the context provided
+   - Suggest new times that don't conflict with other events
+   - Preserve the event title and duration unless user specifies changes
+
+8. Be natural and conversational while providing accurate calendar information. Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
+
+Response:`;
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {

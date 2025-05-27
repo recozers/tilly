@@ -63,17 +63,35 @@ export const createEvent = async (eventData) => {
 // Update an existing event
 export const updateEvent = async (id, eventData) => {
   try {
+    // Build the update payload, only including fields that are provided
+    const updatePayload = {};
+    
+    if (eventData.title !== undefined) {
+      updatePayload.title = eventData.title;
+    }
+    
+    if (eventData.start !== undefined) {
+      updatePayload.start = eventData.start instanceof Date 
+        ? eventData.start.toISOString() 
+        : eventData.start;
+    }
+    
+    if (eventData.end !== undefined) {
+      updatePayload.end = eventData.end instanceof Date 
+        ? eventData.end.toISOString() 
+        : eventData.end;
+    }
+    
+    if (eventData.color !== undefined) {
+      updatePayload.color = eventData.color;
+    }
+
     const response = await fetch(`${API_BASE_URL}/events/${id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        title: eventData.title,
-        start: eventData.start.toISOString(),
-        end: eventData.end.toISOString(),
-        color: eventData.color || '#3b82f6'
-      }),
+      body: JSON.stringify(updatePayload),
     });
     
     return await handleResponse(response);

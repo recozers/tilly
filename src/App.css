@@ -1,0 +1,150 @@
+.app {
+  height: 100vh;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.app-layout {
+  display: flex;
+  height: 100vh;
+}
+
+.calendar-section {
+  flex: 1;
+  padding: 20px;
+  padding-right: 10px;
+  background-color: #f9fafb;
+  overflow: auto;
+}
+
+.ai-section {
+  width: 350px;
+  border-left: 1px solid #e5e7eb;
+  background-color: #ffffff;
+}
+
+.calendar-header {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.calendar-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+  letter-spacing: -0.02em;
+}
+
+.calendar-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.today-btn, .nav-btn, .refresh-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.today-btn {
+  background-color: #6b7280;
+  color: white;
+}
+
+.nav-btn {
+  background-color: #3b82f6;
+  color: white;
+  padding: 8px 12px;
+}
+
+.refresh-btn {
+  background-color: #10b981;
+  color: white;
+}
+
+.refresh-btn:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.error-message {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 14px;
+}
+
+.calendar-container {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.event-creation-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.event-creation-content {
+  background-color: white;
+  border-radius: 12px;
+  padding: 24px;
+  width: 400px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.event-creation-content h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.event-creation-content p {
+  margin: 0 0 16px 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.event-creation-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.event-creation-buttons button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.event-creation-buttons button:first-child {
+  background-color: #6b7280;
+  color: white;
+}
+
+.event-creation-buttons button:last-child {
+  background-color: #3b82f6;
+  color: white;
+} 

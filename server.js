@@ -404,14 +404,14 @@ TODAY'S EVENTS (${context.todayEvents.length}):
 ${context.todayEvents.map(e => {
   const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
   const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  return `- ${e.title} from ${startTime} to ${endTime}`;
+  return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No events today'}
 
 TOMORROW'S EVENTS (${context.tomorrowEvents.length}):
 ${context.tomorrowEvents.map(e => {
   const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
   const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  return `- ${e.title} from ${startTime} to ${endTime}`;
+  return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No events tomorrow'}
 
 UPCOMING EVENTS (${context.upcomingEvents.length}):
@@ -419,7 +419,7 @@ ${context.upcomingEvents.map(e => {
   const date = new Date(e.start).toLocaleDateString();
   const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
   const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  return `- ${e.title} on ${date} from ${startTime} to ${endTime}`;
+  return `- [ID:${e.id}] ${e.title} on ${date} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No upcoming events'}
 
 WEEKLY STATS:
@@ -442,8 +442,8 @@ Example for scheduling WITHOUT conflict:
   "message": "Would you like me to add this meeting to your calendar?",
   "eventData": {
     "title": "Team Meeting",
-    "start": "2025-05-27T18:00:00.000Z",
-    "end": "2025-05-27T19:00:00.000Z"
+    "start": "2025-05-27T18:00:00",
+    "end": "2025-05-27T19:00:00"
   }
 }"
 
@@ -455,25 +455,25 @@ Example for scheduling WITH conflict:
   "message": "Would you like me to add this meeting at 4pm to your calendar?",
   "eventData": {
     "title": "Team Meeting",
-    "start": "2025-05-27T16:00:00.000Z",
-    "end": "2025-05-27T17:00:00.000Z"
+    "start": "2025-05-27T16:00:00",
+    "end": "2025-05-27T17:00:00"
   }
 }"
 
 3. For event rearrangement requests (move, reschedule, change time), suggest moving existing events:
 
 Example for rearrangement:
-"I can help you move that meeting! Let me reschedule your 'Team Meeting' from 2pm to 4pm tomorrow.
+"I can help you change the duration of your Flight Home! Let me update it to 7 hours as requested.
 
 {
   "type": "event_rearrangement",
-  "message": "Would you like me to move this meeting to the new time?",
+  "message": "Would you like me to update the Flight Home duration to 7 hours?",
   "rearrangements": [
     {
-      "eventId": 2,
-      "currentTitle": "Team Meeting",
-      "newStart": "2025-05-27T16:00:00.000Z",
-      "newEnd": "2025-05-27T17:00:00.000Z"
+      "eventId": 5,
+      "currentTitle": "Flight Home",
+      "newStart": "2025-05-31T18:00:00",
+      "newEnd": "2025-06-01T01:00:00"
     }
   ]
 }"
@@ -487,14 +487,18 @@ Example for rearrangement:
    - Check for ACTUAL time conflicts (overlapping periods), not just same-day events
    - Only suggest alternative times if there are real overlapping conflicts
    - Default to 1 hour duration if not specified
-   - When creating JSON, convert local times to UTC using the timezone: ${context.timezone}
-   - Show times to user in local format but store in UTC in the JSON
+   - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
+   - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
 
 7. For event rearrangement:
    - Identify which existing event the user wants to move
-   - Use the event ID from the context provided
+   - Use the EXACT event ID from the context provided (shown as [ID:X] in the event listings above)
    - Suggest new times that don't conflict with other events
    - Preserve the event title and duration unless user specifies changes
+   - CRITICAL: Match the event title to the correct ID from the context - do not guess or use wrong IDs
+   - EXAMPLE: If user asks to modify "Flight Home", find "[ID:5] Flight Home" in the context and use eventId: 5
+   - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
+   - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
 
 8. Be natural and conversational while providing accurate calendar information. Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
 

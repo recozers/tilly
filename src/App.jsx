@@ -38,6 +38,24 @@ const App = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Auto-scroll calendar to 6am on initial load
+  useEffect(() => {
+    const scrollToSixAM = () => {
+      const timeGrid = document.querySelector('.calendar-time-grid')
+      if (timeGrid) {
+        // Find the 6:00 AM slot (12th slot: 0:00, 0:30, 1:00, 1:30, ..., 6:00)
+        const sixAMSlotIndex = 12 // 6 hours * 2 slots per hour
+        const slotHeight = getActualSlotHeight()
+        const scrollPosition = sixAMSlotIndex * slotHeight
+        timeGrid.scrollTop = scrollPosition
+      }
+    }
+
+    // Delay to ensure DOM is ready
+    const timer = setTimeout(scrollToSixAM, 100)
+    return () => clearTimeout(timer)
+  }, []) // Only run on initial mount
+
   // Load events from database on component mount
   useEffect(() => {
     loadEvents()
@@ -62,15 +80,15 @@ const App = () => {
     }
   }
 
-  // Generate time slots for the day (6 AM to 10 PM)
+  // Generate time slots for the day (all 24 hours)
   const generateTimeSlots = () => {
     const slots = []
-    for (let hour = 6; hour <= 22; hour++) {
+    for (let hour = 0; hour < 24; hour++) {
       slots.push({
         time: `${hour.toString().padStart(2, '0')}:00`,
         label: formatTimeLabel(hour, 0)
       })
-      if (hour < 22) {
+      if (hour < 23) {
         slots.push({
           time: `${hour.toString().padStart(2, '0')}:30`,
           label: formatTimeLabel(hour, 30)
@@ -143,16 +161,45 @@ const App = () => {
   const calculateEventDimensions = (event, date) => {
     const eventStart = new Date(event.start)
     const eventEnd = new Date(event.end)
+    const currentDate = new Date(date)
+    currentDate.setHours(0, 0, 0, 0)
     
-    // Check if this event is on the given date
-    if (eventStart.toDateString() !== date.toDateString()) {
+    // Check if this event overlaps with the given date
+    const eventStartDate = new Date(eventStart)
+    eventStartDate.setHours(0, 0, 0, 0)
+    const eventEndDate = new Date(eventEnd)
+    eventEndDate.setHours(0, 0, 0, 0)
+    
+    // If event doesn't overlap with this date, don't show it
+    if (currentDate < eventStartDate || currentDate > eventEndDate) {
       return null
     }
 
-    // Calculate minutes from 6 AM (start of calendar)
-    const startMinutes = eventStart.getHours() * 60 + eventStart.getMinutes()
-    const endMinutes = eventEnd.getHours() * 60 + eventEnd.getMinutes()
-    const calendarStartMinutes = 6 * 60 // 6 AM
+    // Calculate the visible portion of the event on this specific date
+    let visibleStart, visibleEnd
+    
+    if (eventStartDate.getTime() === currentDate.getTime()) {
+      // Event starts on this date - use actual start time
+      visibleStart = eventStart
+    } else {
+      // Event started on a previous date - start at midnight (calendar start)
+      visibleStart = new Date(currentDate)
+      visibleStart.setHours(0, 0, 0, 0)
+    }
+    
+    if (eventEndDate.getTime() === currentDate.getTime()) {
+      // Event ends on this date - use actual end time
+      visibleEnd = eventEnd
+    } else {
+      // Event continues to next date - end at 11:59 PM (calendar end) 
+      visibleEnd = new Date(currentDate)
+      visibleEnd.setHours(23, 59, 59, 999)
+    }
+
+    // Calculate minutes from midnight (start of calendar)
+    const startMinutes = visibleStart.getHours() * 60 + visibleStart.getMinutes()
+    const endMinutes = visibleEnd.getHours() * 60 + visibleEnd.getMinutes()
+    const calendarStartMinutes = 0 // Midnight
 
     // Get the actual slot height from the DOM
     const slotHeight = getActualSlotHeight()
@@ -174,8 +221,8 @@ const App = () => {
 
     // Get the actual slot height from the DOM
     const slotHeight = getActualSlotHeight()
-    const minutesFromStart = (relativeY / slotHeight) * 30 + (6 * 60) // Start at 6 AM
-    const totalMinutes = Math.max(6 * 60, Math.min(22 * 60, minutesFromStart))
+    const minutesFromStart = (relativeY / slotHeight) * 30 // Start at midnight
+    const totalMinutes = Math.max(0, Math.min(24 * 60 - 1, minutesFromStart)) // 0 to 23:59
     
     // Calculate day
     const columnWidth = (rect.width - 80) / 7
@@ -248,8 +295,10 @@ const App = () => {
 
   // Update event (for drag and drop, resize, and title editing)
   const updateEventInDatabase = async (eventId, updatedData) => {
+    console.log(`🔍 DEBUG: updateEventInDatabase called with ID ${eventId}`, updatedData)
     try {
       const updatedEvent = await eventsApi.updateEvent(eventId, updatedData)
+      console.log(`🔍 DEBUG: API returned updated event:`, updatedEvent)
       // Don't update state here - let the caller handle it to avoid conflicts
       return updatedEvent
     } catch (error) {
@@ -341,20 +390,6 @@ const App = () => {
         // Calculate duration and new end time
         const duration = dragState.originalEnd - dragState.originalStart
         const newEnd = new Date(newStart.getTime() + duration)
-        
-        // Check for day change based on X movement
-        const deltaX = e.clientX - dragState.startX
-        const calendarGrid = document.querySelector('.calendar-time-grid')
-        if (calendarGrid) {
-          const rect = calendarGrid.getBoundingClientRect()
-          const columnWidth = (rect.width - 80) / 7
-          const dayOffset = Math.round(deltaX / columnWidth)
-          
-          if (dayOffset !== 0) {
-            newStart.setDate(newStart.getDate() + dayOffset)
-            newEnd.setDate(newEnd.getDate() + dayOffset)
-          }
-        }
         
         // Round to nearest 15 minutes
         const roundedStart = roundToQuarterHour(newStart)
@@ -504,16 +539,33 @@ const App = () => {
   const rearrangeEvents = async (rearrangements) => {
     if (!rearrangements || rearrangements.length === 0) return
 
+    console.log('🔍 DEBUG: Received rearrangements:', rearrangements)
+
     try {
       // Update each event
       const updatePromises = rearrangements.map(async (rearrangement) => {
+        console.log(`🔍 DEBUG: Updating event ID ${rearrangement.eventId} (${rearrangement.currentTitle})`)
+        
+        // Convert local times to UTC properly
+        // If the time string doesn't end with 'Z', treat it as local time
+        const startTime = rearrangement.newStart.endsWith('Z') 
+          ? new Date(rearrangement.newStart)
+          : new Date(rearrangement.newStart + (rearrangement.newStart.includes('T') ? '' : 'T00:00:00'))
+        
+        const endTime = rearrangement.newEnd.endsWith('Z')
+          ? new Date(rearrangement.newEnd) 
+          : new Date(rearrangement.newEnd + (rearrangement.newEnd.includes('T') ? '' : 'T00:00:00'))
+        
+        console.log(`🔍 DEBUG: Converted times - Start: ${startTime.toISOString()}, End: ${endTime.toISOString()}`)
+        
         return await updateEventInDatabase(rearrangement.eventId, {
-          start: new Date(rearrangement.newStart),
-          end: new Date(rearrangement.newEnd)
+          start: startTime,
+          end: endTime
         })
       })
 
       const updatedEvents = await Promise.all(updatePromises)
+      console.log('🔍 DEBUG: Updated events from database:', updatedEvents)
       
       // Update local state with all the updated events
       setEvents(prev => {
@@ -637,7 +689,7 @@ const App = () => {
       <div className="app-layout">
         <div className="calendar-section">
           <div className="calendar-header">
-            <h1>Tilly Calendar</h1>
+            <h1>Calendar</h1>
             <div className="calendar-controls">
               <button 
                 onClick={goToToday}
@@ -798,9 +850,22 @@ const App = () => {
                   zIndex: 50
                 }}>
                   {weekDates.map((date, dayIndex) => {
-                    const dayEvents = events.filter(event => 
-                      new Date(event.start).toDateString() === date.toDateString()
-                    )
+                    // Show events that overlap with this date (not just events that start on this date)
+                    const dayEvents = events.filter(event => {
+                      const eventStart = new Date(event.start)
+                      const eventEnd = new Date(event.end)
+                      const currentDate = new Date(date)
+                      
+                      // Set times to compare just dates
+                      const eventStartDate = new Date(eventStart)
+                      eventStartDate.setHours(0, 0, 0, 0)
+                      const eventEndDate = new Date(eventEnd)
+                      eventEndDate.setHours(0, 0, 0, 0)
+                      currentDate.setHours(0, 0, 0, 0)
+                      
+                      // Event overlaps this date if it starts before or on this date AND ends on or after this date
+                      return eventStartDate <= currentDate && eventEndDate >= currentDate
+                    })
                     
                     return (
                       <div
@@ -1059,14 +1124,14 @@ const App = () => {
                 fontWeight: 600, 
                 color: '#1f2937' 
               }}>
-                Tilly AI Assistant
+                Tilly
               </h2>
               <p style={{ 
                 margin: '4px 0 0 0', 
                 fontSize: '14px', 
                 color: '#6b7280' 
               }}>
-                Ask me about your calendar!
+                Ask me about your calendar
               </p>
             </div>
             

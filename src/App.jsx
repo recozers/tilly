@@ -30,6 +30,14 @@ const App = () => {
   const [inputMessage, setInputMessage] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
 
+  // Ref for auto-scrolling chat
+  const messagesEndRef = useRef(null)
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
   // Load events from database on component mount
   useEffect(() => {
     loadEvents()
@@ -1225,6 +1233,9 @@ const App = () => {
                   Thinking...
                 </div>
               )}
+              
+              {/* Invisible element for auto-scrolling */}
+              <div ref={messagesEndRef} />
             </div>
             
             {/* Input Section */}

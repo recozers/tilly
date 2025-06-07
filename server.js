@@ -14,12 +14,9 @@ const {
   updateEvent,
   deleteEvent,
   getEventsByDateRange,
-  closeDatabase,
-  searchEvents,
-  getUpcomingEvents,
   getEventsForPeriod,
-  isTimeSlotFree,
   getCalendarStats,
+  closeDatabase,
   importEvents,
   addCalendarSubscription,
   getCalendarSubscriptions,
@@ -277,84 +274,7 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
-// Search events
-app.get('/api/events/search', async (req, res) => {
-  try {
-    const { q: searchTerm, timeframe } = req.query;
-    
-    if (!searchTerm) {
-      return res.status(400).json({ error: 'Search term is required' });
-    }
-    
-    let timeframeObj = null;
-    if (timeframe) {
-      const [start, end] = timeframe.split(',');
-      timeframeObj = {
-        start: new Date(start),
-        end: new Date(end)
-      };
-    }
-    
-    const events = await searchEvents(searchTerm, timeframeObj);
-    res.json(events);
-  } catch (error) {
-    console.error('Error searching events:', error);
-    res.status(500).json({ error: 'Failed to search events' });
-  }
-});
 
-// Get upcoming events
-app.get('/api/events/upcoming', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 10;
-    const events = await getUpcomingEvents(limit);
-    res.json(events);
-  } catch (error) {
-    console.error('Error getting upcoming events:', error);
-    res.status(500).json({ error: 'Failed to get upcoming events' });
-  }
-});
-
-// Get events for specific periods
-app.get('/api/events/period/:period', async (req, res) => {
-  try {
-    const { period } = req.params;
-    const events = await getEventsForPeriod(period);
-    res.json(events);
-  } catch (error) {
-    console.error('Error getting events for period:', error);
-    res.status(500).json({ error: 'Failed to get events for period' });
-  }
-});
-
-// Check availability
-app.post('/api/events/availability', async (req, res) => {
-  try {
-    const { startTime, endTime } = req.body;
-    
-    if (!startTime || !endTime) {
-      return res.status(400).json({ error: 'Start time and end time are required' });
-    }
-    
-    const isFree = await isTimeSlotFree(new Date(startTime), new Date(endTime));
-    res.json({ isFree });
-  } catch (error) {
-    console.error('Error checking availability:', error);
-    res.status(500).json({ error: 'Failed to check availability' });
-  }
-});
-
-// Get calendar statistics
-app.get('/api/events/stats', async (req, res) => {
-  try {
-    const period = req.query.period || 'this_week';
-    const stats = await getCalendarStats(period);
-    res.json(stats);
-  } catch (error) {
-    console.error('Error getting calendar stats:', error);
-    res.status(500).json({ error: 'Failed to get calendar stats' });
-  }
-});
 
 // POST /api/events/import - Import events from iCal file
 app.post('/api/events/import', upload.single('icalFile'), async (req, res) => {
@@ -901,7 +821,7 @@ app.post('/api/calendar/query', async (req, res) => {
     
     // Use Claude API for intelligent calendar assistance
     const requestBody = {
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1000,
       messages: [{
         role: 'user',
@@ -909,6 +829,10 @@ app.post('/api/calendar/query', async (req, res) => {
       }]
     };
 
+    console.log('🔍 DEBUG: Events being sent to Claude:');
+    console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('📅 Tomorrow events:', tomorrowEvents.length, tomorrowEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('📅 Recent events:', recentEvents.length, recentEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('🔍 DEBUG: Sending Claude API request with body:', JSON.stringify(requestBody, null, 2));
     console.log('🔍 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
     console.log('🔍 DEBUG: API Key length:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.length : 0);
@@ -967,18 +891,24 @@ app.post('/api/calendar/query', async (req, res) => {
     const claudeResponse = claudeData.content[0].text;
     
     // Try to extract JSON from the response (could be mixed with text)
-    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement)"[\s\S]*\}/);
+    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
     
     if (jsonMatch) {
       try {
         const actionData = JSON.parse(jsonMatch[0]);
-        if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement') {
+        if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement' || actionData.type === 'multiple_actions') {
           // Validate the action data before sending to frontend
-          const validationResult = validateActionData(actionData);
+          const validationResult = validateActionData(actionData, calendarContext);
           if (!validationResult.valid) {
-            console.warn('Claude response validation failed:', validationResult.error);
-            console.warn('Original Claude response:', claudeResponse);
-            // Fall through to regular text response if validation fails
+            console.error('🚨 Claude response validation failed:', validationResult.error);
+            console.error('🚨 Original Claude response:', claudeResponse);
+            // Send error response back to user explaining the issue
+            res.status(400).json({ 
+              error: 'Invalid calendar response detected',
+              details: validationResult.error,
+              suggestion: 'Please try rephrasing your request or ask for a different time slot.'
+            });
+            return;
           } else {
             // Extract the text part (everything before the JSON)
             const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
@@ -989,7 +919,8 @@ app.post('/api/calendar/query', async (req, res) => {
                 type: actionData.type,
                 message: textPart || actionData.message,
                 eventData: actionData.eventData,
-                rearrangements: actionData.rearrangements || null
+                rearrangements: actionData.rearrangements || null,
+                actions: actionData.actions || null
               }, 
               context: calendarContext 
             });
@@ -1011,8 +942,25 @@ app.post('/api/calendar/query', async (req, res) => {
   }
 });
 
+// Check for event conflicts
+function checkEventConflicts(startDate, endDate, existingEvents) {
+  const conflicts = [];
+  
+  for (const event of existingEvents) {
+    const eventStart = new Date(event.start);
+    const eventEnd = new Date(event.end);
+    
+    // Check if times overlap
+    if (startDate < eventEnd && endDate > eventStart) {
+      conflicts.push(event);
+    }
+  }
+  
+  return conflicts;
+}
+
 // Validate Claude's action data to prevent time parsing issues
-function validateActionData(actionData) {
+function validateActionData(actionData, context = null) {
   try {
     console.log('🔍 Validating Claude action data:', actionData);
     
@@ -1061,6 +1009,33 @@ function validateActionData(actionData) {
         return { valid: false, error: `Start time (${start}) must be before end time (${end})` };
       }
       
+      // Check for common PM/AM mistakes (e.g., 01:00 when user meant 13:00)
+      const startHour = startDate.getHours();
+      const endHour = endDate.getHours();
+      if (startHour < 6 && endHour > 12) {
+        return { valid: false, error: `Suspicious time range detected: ${start} to ${end}. This looks like a PM/AM conversion error. Check your time format: 1pm = 13:00, 2pm = 14:00, 3pm = 15:00, etc.` };
+      }
+      
+      // Check for unrealistic early morning times (1am-5am) which are often mistakes
+      if (startHour >= 1 && startHour <= 5) {
+        console.warn(`⚠️ Very early morning time detected: ${start}. Verify this is intentional.`);
+      }
+      
+      // Server-side conflict detection for event suggestions
+      console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
+      console.log(`🔍 Available events for conflict check:`, context?.recentEvents?.length || 0);
+      if (context && context.recentEvents) {
+        console.log(`🔍 Events being checked:`, context.recentEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+        const conflicts = checkEventConflicts(startDate, endDate, context.recentEvents);
+        console.log(`🔍 Found ${conflicts.length} conflicts:`, conflicts.map(e => e.title));
+        if (conflicts.length > 0) {
+          const conflictList = conflicts.map(e => `"${e.title}" (${new Date(e.start).toLocaleString()} to ${new Date(e.end).toLocaleString()})`).join(', ');
+          return { valid: false, error: `Event conflict detected! The proposed time ${start} to ${end} conflicts with existing events: ${conflictList}. Claude should have suggested a multiple_actions solution to resolve this conflict.` };
+        }
+      } else {
+        console.log(`⚠️ No context or recentEvents available for conflict detection`);
+      }
+      
       console.log('✅ Event suggestion validation passed');
       return { valid: true };
     }
@@ -1090,8 +1065,10 @@ function validateActionData(actionData) {
         }
         
         if (!rearrangement.newEnd || typeof rearrangement.newEnd !== 'string') {
-          return { valid: false, error: `Invalid newEnd in rearrangement ${i}` };
+          return { valid: false, error: `Invalid newEnd in rearrangement ${i}. Do not provide JSON without specific new times.` };
         }
+        
+
         
         // Validate time format
         const timeFormatRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
@@ -1118,9 +1095,43 @@ function validateActionData(actionData) {
         if (startDate >= endDate) {
           return { valid: false, error: `Start time must be before end time in rearrangement ${i}` };
         }
+        
+        // Check for common PM/AM mistakes in rearrangements
+        const rearrangeStartHour = startDate.getHours();
+        const rearrangeEndHour = endDate.getHours();
+        if (rearrangeStartHour < 6 && rearrangeEndHour > 12) {
+          return { valid: false, error: `Suspicious time range in rearrangement ${i}: ${rearrangement.newStart} to ${rearrangement.newEnd}. This looks like a PM/AM conversion error. Check your time format: 1pm = 13:00, 2pm = 14:00, 3pm = 15:00, etc.` };
+        }
+        
+        // Warn about unrealistic early morning times in rearrangements
+        if (rearrangeStartHour >= 1 && rearrangeStartHour <= 5) {
+          console.warn(`⚠️ Very early morning time in rearrangement ${i}: ${rearrangement.newStart}. Verify this is intentional.`);
+        }
       }
       
       console.log('✅ Event rearrangement validation passed');
+      return { valid: true };
+    }
+    
+    if (actionData.type === 'multiple_actions') {
+      if (!actionData.actions || !Array.isArray(actionData.actions)) {
+        return { valid: false, error: 'Missing or invalid actions array for multiple_actions' };
+      }
+      
+      if (actionData.actions.length === 0) {
+        return { valid: false, error: 'actions array cannot be empty for multiple_actions' };
+      }
+      
+      // Validate each individual action
+      for (let i = 0; i < actionData.actions.length; i++) {
+        const action = actionData.actions[i];
+        const subValidation = validateActionData(action);
+        if (!subValidation.valid) {
+          return { valid: false, error: `Action ${i + 1} validation failed: ${subValidation.error}` };
+        }
+      }
+      
+      console.log('✅ Multiple actions validation passed');
       return { valid: true };
     }
     
@@ -1184,14 +1195,21 @@ USER QUERY: "${query}"
 INSTRUCTIONS:
 1. Use the chat history above to maintain context and provide coherent follow-up responses. Reference previous conversations when relevant.
 
-2. For event scheduling requests, be conversational and helpful. Check for TIME CONFLICTS (overlapping time slots) - having other events on the same day is fine unless they overlap. Then end your response with a JSON object:
+2. For event scheduling requests, be CONCISE and helpful. 
+
+MANDATORY CONFLICT CHECK PROCESS (do this mentally, don't write it out):
+- STEP 1: Identify your proposed event's start and end times
+- STEP 2: Check if times overlap with existing events using: (your_start < their_end) AND (your_end > their_start)
+- STEP 3: If ANY conflict found, use "multiple_actions" to rearrange. If no conflicts, use "event_suggestion"
+
+Keep responses SHORT - don't repeat information the user can already see. Then end with a JSON object:
 
 Example for scheduling WITHOUT conflict:
-"I'd be happy to schedule that meeting for tomorrow at 6pm! I see you have a meeting from 10:30am to 11:30am, but 6pm works perfectly since there's no time overlap.
+"Perfect! I can schedule your meeting tomorrow at 6pm - no conflicts.
 
 {
   "type": "event_suggestion",
-  "message": "Would you like me to add this meeting to your calendar?",
+  "message": "Add meeting to calendar?",
   "eventData": {
     "title": "Team Meeting",
     "start": "2025-05-27T18:00:00",
@@ -1200,16 +1218,32 @@ Example for scheduling WITHOUT conflict:
 }"
 
 Example for scheduling WITH conflict:
-"I'd like to help you schedule that meeting for 2pm tomorrow, but you already have a meeting from 2:00pm to 3:00pm. How about 4pm instead?
+"Conflict detected - I'll move Vector Embeddings to 1pm-4pm and add Collect Tilly at the requested time.
 
 {
-  "type": "event_suggestion", 
-  "message": "Would you like me to add this meeting at 4pm to your calendar?",
-  "eventData": {
-    "title": "Team Meeting",
-    "start": "2025-05-27T16:00:00",
-    "end": "2025-05-27T17:00:00"
-  }
+  \"type\": \"multiple_actions\",
+  \"message\": \"Rearrange schedule?\",
+  \"actions\": [
+    {
+      \"type\": \"event_rearrangement\",
+      \"rearrangements\": [
+                 {
+           \"eventId\": 405,
+           \"currentTitle\": \"Implement Vector Embeddings Approach\",
+           \"newStart\": \"2025-06-08T13:00:00\",
+           \"newEnd\": \"2025-06-08T16:00:00\"
+         }
+      ]
+    },
+    {
+      \"type\": \"event_suggestion\",
+      \"eventData\": {
+        \"title\": \"Collect Tilly\",
+        \"start\": \"2025-06-08T09:30:00\",
+        \"end\": \"2025-06-08T12:00:00\"
+      }
+    }
+  ]
 }"
 
 3. For event rearrangement requests (move, reschedule, change time), suggest moving existing events:
@@ -1230,18 +1264,86 @@ Example for rearrangement:
   ]
 }"
 
-4. For all other queries (availability, upcoming events, summaries, etc.), respond with helpful conversational text only.
+
+
+Example for multiple actions (reschedule + add new event):
+"I'll reschedule your Vector Embeddings event to 1pm-4pm and add Collect Tilly at 9:30am-12pm.
+
+{
+  "type": "multiple_actions",
+  "message": "Would you like me to reschedule the existing event and add the new one?",
+  "actions": [
+    {
+      "type": "event_rearrangement",
+      "rearrangements": [
+        {
+          "eventId": 405,
+          "currentTitle": "Implement Vector Embeddings Approach",
+          "newStart": "2025-06-08T13:00:00",
+          "newEnd": "2025-06-08T16:00:00"
+        }
+      ]
+    },
+    {
+      "type": "event_suggestion",
+      "eventData": {
+        "title": "Collect Tilly",
+        "start": "2025-06-08T09:30:00",
+        "end": "2025-06-08T12:00:00"
+      }
+    }
+  ]
+}"
+
+4. For all other queries (availability, upcoming events, summaries, etc.), respond with BRIEF conversational text only. 
+
+CRITICAL: DO NOT include any JSON whatsoever for informational queries. Only text responses for availability, summaries, and general questions.
 
 5. IMPORTANT: A scheduling conflict only occurs when the proposed time OVERLAPS with an existing event. Multiple events on the same day are perfectly fine if they don't overlap in time.
+
+CRITICAL CONFLICT CHECK: Before suggesting any event, you MUST check:
+- Look at the exact start and end times of ALL existing events
+- Check if your proposed time overlaps with ANY existing event
+- An event conflicts if: (new_start < existing_end) AND (new_end > existing_start)
+- Example: If Vector Embeddings is 2:00 PM to 5:00 PM, then 2:15 PM to 2:45 PM CONFLICTS (overlaps)
+- Example: If Walk Dogs is 1:00 PM to 2:00 PM, then 2:00 PM to 3:00 PM is OK (no overlap)
+- CRITICAL: Always consider BOTH start AND end times - don't just look at start times!
+- STEP-BY-STEP CONFLICT CHECK:
+  1. Write down your proposed start and end times
+  2. List ALL existing events with their FULL time ranges (start to end)
+  3. For each existing event, check: Does your time overlap with theirs?
+  4. If ANY overlap exists, use "multiple_actions" to rearrange the schedule
+
+CONFLICT DETECTION: When there's a time overlap, you MUST:
+- Clearly explain the specific overlap (which times conflict)
+- Automatically suggest a complete rearranged schedule using "multiple_actions" format
+- Provide a concrete solution that accommodates both the existing event and the new request
+- If user rejects the solution, offer a different complete rearrangement
+
+SOLUTION APPROACH: Always provide complete solutions, not questions:
+- Move the conflicting event to a logical alternative time
+- Include the new event at the requested time
+- Present as one unified schedule change using "multiple_actions"
+- Make the solution smart by considering time gaps, logical flow, and user preferences
 
 6. For event scheduling:
    - Parse natural language to extract event title, date, and time
    - Check for ACTUAL time conflicts (overlapping periods), not just same-day events
-   - Only suggest alternative times if there are real overlapping conflicts
+   - If there's a conflict: explain the overlap clearly and automatically suggest a complete solution using "multiple_actions" format
+   - BEFORE suggesting any time, manually check if it overlaps with existing events by comparing start/end times
+   - If no conflict: suggest the requested time using "event_suggestion" format
    - Default to 1 hour duration if not specified
    - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
    - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
    - CRITICAL: Double-check your time arithmetic. If you calculate "11:30 AM + 3 hours = 2:30 PM", make sure your JSON shows "14:30:00" not "02:30:00"
+   - CRITICAL: 1 PM = 13:00, 2 PM = 14:00, etc. NEVER use 01:00 for 1 PM - that's 1 AM!
+   - EXAMPLES: 1pm-4pm = "13:00:00" to "16:00:00", 9am-12pm = "09:00:00" to "12:00:00"
+   - TIME CONVERSION CHART:
+     12am = 00:00, 1am = 01:00, 2am = 02:00... 11am = 11:00
+     12pm = 12:00, 1pm = 13:00, 2pm = 14:00, 3pm = 15:00, 4pm = 16:00, 5pm = 17:00... 11pm = 23:00
+   - ALWAYS double-check: if you say "3pm" in your text, JSON must show "15:00:00" NOT "03:00:00"
+   - NEVER create custom JSON types - only use "event_suggestion" or "event_rearrangement"
+   - CRITICAL: When there's a conflict, always provide a complete "multiple_actions" solution
 
 7. For event rearrangement:
    - Identify which existing event the user wants to move
@@ -1254,8 +1356,20 @@ Example for rearrangement:
    - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
    - CRITICAL: Verify your time calculations. When moving events, ensure start and end times are both correctly calculated
    - EXAMPLE: If moving a 30-minute event from 11:30 AM to 3:30 PM, JSON should show start: "2025-05-27T15:30:00", end: "2025-05-27T16:00:00"
+   - CRITICAL: event_rearrangement JSON MUST include newStart AND newEnd times - never provide incomplete JSON
+   - If you need to ask for more details about timing, provide NO JSON until you have specific times to suggest
 
-8. Be natural and conversational while providing accurate calendar information. Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
+   - CRITICAL: When rescheduling due to conflict, use "multiple_actions" type to do both rearrangement AND add new event
+   - Format: {"type": "multiple_actions", "actions": [rearrangement_action, event_suggestion_action]}
+
+8. Be BRIEF and natural while providing accurate calendar information. Don't repeat information visible in the UI. Keep responses under 2 sentences when possible. 
+
+CRITICAL RULE: Only provide JSON for scheduling/rearranging events. For informational queries (availability, summaries, etc.), respond with text only - ABSOLUTELY NO JSON.
+
+Examples of when to use JSON: "schedule a meeting", "move my event", "reschedule the call"
+Examples of when NOT to use JSON: "what's tomorrow like?", "show my schedule", "how busy am I?"
+
+Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
 
 Response:`;
 }

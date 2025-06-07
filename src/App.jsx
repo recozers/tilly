@@ -9,7 +9,7 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const [currentView, setCurrentView] = useState('timeGridWeek')
+
   const [currentDate, setCurrentDate] = useState(new Date())
   const [isCreatingEvent, setIsCreatingEvent] = useState(false)
   const [newEventData, setNewEventData] = useState(null)
@@ -1006,6 +1006,35 @@ const App = () => {
     }
   }
 
+  const handleMultipleActions = async (actions) => {
+    try {
+      // Execute each action in sequence
+      for (const action of actions) {
+        if (action.type === 'event_rearrangement' && action.rearrangements) {
+          await rearrangeEvents(action.rearrangements)
+        } else if (action.type === 'event_suggestion' && action.eventData) {
+          await addEventToCalendar(action.eventData)
+        }
+      }
+      
+      // Clear the multiple actions from the message
+      setMessages(currentMessages => 
+        currentMessages.map(msg => 
+          msg.multipleActions 
+            ? { ...msg, multipleActions: undefined }
+            : msg
+        )
+      )
+      
+      // Refresh events to show the changes
+      await loadEvents()
+      
+    } catch (error) {
+      console.error('Error executing multiple actions:', error)
+      setErrorMessage('Failed to execute all actions. Some may have been completed.')
+    }
+  }
+
   const handleSendMessage = async () => {
     if (inputMessage.trim() === '' || isProcessing) return
 
@@ -1050,15 +1079,16 @@ const App = () => {
 
       const data = await response.json()
       
-      // Check if the response is a structured event suggestion or rearrangement
-      if (typeof data.response === 'object' && (data.response.type === 'event_suggestion' || data.response.type === 'event_rearrangement')) {
+      // Check if the response is a structured event suggestion, rearrangement, or multiple actions
+      if (typeof data.response === 'object' && (data.response.type === 'event_suggestion' || data.response.type === 'event_rearrangement' || data.response.type === 'multiple_actions')) {
         const botMessage = {
           id: (Date.now() + 1).toString(),
           text: data.response.message,
           sender: 'bot',
           timestamp: new Date(),
           pendingEvent: data.response.type === 'event_suggestion' ? data.response.eventData : null,
-          pendingRearrangements: data.response.type === 'event_rearrangement' ? data.response.rearrangements : null
+          pendingRearrangements: data.response.type === 'event_rearrangement' ? data.response.rearrangements : null,
+          multipleActions: data.response.type === 'multiple_actions' ? data.response.actions : null
         }
         setMessages(currentMessages => [...currentMessages, botMessage])
       } else {
@@ -2097,6 +2127,76 @@ const App = () => {
                               currentMessages.map(msg => 
                                 msg.id === message.id 
                                   ? { ...msg, pendingEvent: undefined }
+                                  : msg
+                              )
+                            )
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#6b7280',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            fontWeight: 500
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Multiple actions buttons */}
+                  {message.multipleActions && (
+                    <div style={{ 
+                      marginTop: '8px', 
+                      padding: '12px', 
+                      backgroundColor: '#f3e8ff',
+                      border: '1px solid #8b5cf6',
+                      borderRadius: '8px',
+                      fontSize: '13px'
+                    }}>
+                      <div style={{ marginBottom: '8px', fontWeight: 500 }}>
+                        🔄 Multiple Actions
+                      </div>
+                      {message.multipleActions.map((action, index) => (
+                        <div key={index} style={{ marginBottom: '6px', color: '#6b7280' }}>
+                          {action.type === 'event_rearrangement' && action.rearrangements && (
+                            <div>
+                              🔄 Move "{action.rearrangements[0].currentTitle}" to {new Date(action.rearrangements[0].newStart).toLocaleDateString()} {new Date(action.rearrangements[0].newStart).toLocaleTimeString()}
+                            </div>
+                          )}
+                          {action.type === 'event_suggestion' && action.eventData && (
+                            <div>
+                              ➕ Add "{action.eventData.title}" on {new Date(action.eventData.start).toLocaleDateString()} at {new Date(action.eventData.start).toLocaleTimeString()}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleMultipleActions(message.multipleActions)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#8b5cf6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            fontWeight: 500
+                          }}
+                        >
+                          Execute All Actions
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMessages(currentMessages => 
+                              currentMessages.map(msg => 
+                                msg.id === message.id 
+                                  ? { ...msg, multipleActions: undefined }
                                   : msg
                               )
                             )

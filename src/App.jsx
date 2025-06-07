@@ -30,6 +30,31 @@ const App = () => {
   const [inputMessage, setInputMessage] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
 
+  // Import state
+  const [isImporting, setIsImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const fileInputRef = useRef(null)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importMethod, setImportMethod] = useState('file')
+  const [importUrl, setImportUrl] = useState('')
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
+  
+  // Calendar subscription state
+  const [calendarSubscriptions, setCalendarSubscriptions] = useState([])
+  const [subscribeToCalendar, setSubscribeToCalendar] = useState(false)
+  const [subscriptionName, setSubscriptionName] = useState('')
+  const [showSubscriptions, setShowSubscriptions] = useState(false)
+  
+  // Invitation state
+  const [showInviteModal, setShowInviteModal] = useState(false)
+  const [inviteEventId, setInviteEventId] = useState(null)
+  const [inviteEmails, setInviteEmails] = useState([''])
+  const [inviteMessage, setInviteMessage] = useState('')
+  const [isSendingInvites, setIsSendingInvites] = useState(false)
+
   // Ref for auto-scrolling chat
   const messagesEndRef = useRef(null)
 
@@ -173,8 +198,76 @@ const App = () => {
     return 61 // fallback
   }
 
-  // Calculate event position and height
-  const calculateEventDimensions = (event, date) => {
+  // Calculate overlapping events for a specific date
+  const getOverlappingEvents = (targetEvent, allEvents, date) => {
+    const targetStart = new Date(targetEvent.start)
+    const targetEnd = new Date(targetEvent.end)
+    
+    return allEvents.filter(event => {
+      if (event.id === targetEvent.id) return false
+      
+      const eventStart = new Date(event.start)
+      const eventEnd = new Date(event.end)
+      const currentDate = new Date(date)
+      currentDate.setHours(0, 0, 0, 0)
+      
+      // Check if both events are visible on this date
+      const targetStartDate = new Date(targetStart)
+      targetStartDate.setHours(0, 0, 0, 0)
+      const targetEndDate = new Date(targetEnd)
+      targetEndDate.setHours(0, 0, 0, 0)
+      
+      const eventStartDate = new Date(eventStart)
+      eventStartDate.setHours(0, 0, 0, 0)
+      const eventEndDate = new Date(eventEnd)
+      eventEndDate.setHours(0, 0, 0, 0)
+      
+      // Both events must be visible on this date
+      const targetVisible = targetStartDate <= currentDate && targetEndDate >= currentDate
+      const eventVisible = eventStartDate <= currentDate && eventEndDate >= currentDate
+      
+      if (!targetVisible || !eventVisible) return false
+      
+      // Calculate visible time ranges for this date
+      let targetVisibleStart, targetVisibleEnd, eventVisibleStart, eventVisibleEnd
+      
+      // Target event visible range
+      if (targetStartDate.getTime() === currentDate.getTime()) {
+        targetVisibleStart = targetStart
+      } else {
+        targetVisibleStart = new Date(currentDate)
+        targetVisibleStart.setHours(0, 0, 0, 0)
+      }
+      
+      if (targetEndDate.getTime() === currentDate.getTime()) {
+        targetVisibleEnd = targetEnd
+      } else {
+        targetVisibleEnd = new Date(currentDate)
+        targetVisibleEnd.setHours(23, 59, 59, 999)
+      }
+      
+      // Other event visible range
+      if (eventStartDate.getTime() === currentDate.getTime()) {
+        eventVisibleStart = eventStart
+      } else {
+        eventVisibleStart = new Date(currentDate)
+        eventVisibleStart.setHours(0, 0, 0, 0)
+      }
+      
+      if (eventEndDate.getTime() === currentDate.getTime()) {
+        eventVisibleEnd = eventEnd
+      } else {
+        eventVisibleEnd = new Date(currentDate)
+        eventVisibleEnd.setHours(23, 59, 59, 999)
+      }
+      
+      // Check if the visible time ranges overlap
+      return targetVisibleStart < eventVisibleEnd && targetVisibleEnd > eventVisibleStart
+    })
+  }
+
+  // Calculate event position, height, and width for overlaps
+  const calculateEventDimensions = (event, date, allEvents) => {
     const eventStart = new Date(event.start)
     const eventEnd = new Date(event.end)
     const currentDate = new Date(date)
@@ -221,9 +314,37 @@ const App = () => {
     const slotHeight = getActualSlotHeight()
     const topOffset = ((startMinutes - calendarStartMinutes) / 30) * slotHeight
     const duration = endMinutes - startMinutes
-    const height = Math.max(30, (duration / 30) * slotHeight - 10)
+    const height = Math.max(30, (duration / 30) * slotHeight)
 
-    return { top: topOffset, height }
+    // Calculate overlap positioning
+    const overlappingEvents = getOverlappingEvents(event, allEvents, date)
+    const totalOverlapping = overlappingEvents.length + 1 // Including current event
+    
+    // Sort all overlapping events (including current) by start time, then by ID for consistency
+    const allOverlappingEvents = [event, ...overlappingEvents].sort((a, b) => {
+      const startDiff = new Date(a.start) - new Date(b.start)
+      if (startDiff === 0) {
+        return a.id - b.id // Use ID as tiebreaker for consistent ordering
+      }
+      return startDiff
+    })
+    
+    const eventIndex = allOverlappingEvents.findIndex(e => e.id === event.id)
+    
+    // Calculate exact width and position for overlapping events
+    const exactWidthPercentage = 100 / totalOverlapping
+    const exactLeftPercentage = eventIndex * exactWidthPercentage
+    
+    // Apply minimum width constraint but keep exact positioning
+    const widthPercentage = Math.max(20, exactWidthPercentage)
+    const leftPercentage = exactLeftPercentage
+
+    return { 
+      top: topOffset, 
+      height,
+      widthPercentage,
+      leftPercentage
+    }
   }
 
   // Convert pixel position to time and date
@@ -529,6 +650,175 @@ const App = () => {
     setCurrentDate(new Date())
   }
 
+  // Enhanced import functions
+  const handleFileSelect = (e) => {
+    setSelectedFile(e.target.files[0])
+    setErrorMessage('')
+    setSuccessMessage('')
+  }
+
+  const handleFileImport = async () => {
+    if (!selectedFile) {
+      setErrorMessage('Please select a file first')
+      return
+    }
+
+    setIsImporting(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const formData = new FormData()
+      formData.append('icsFile', selectedFile)
+
+      const response = await fetch('/api/events/import', {
+        method: 'POST',
+        body: formData
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to import file')
+      }
+
+      setSuccessMessage(`Successfully imported ${result.successful} events`)
+      
+      // Refresh events
+      await loadEvents()
+      
+      // Clear form
+      setSelectedFile(null)
+      
+      // Close modal after short delay
+      setTimeout(() => {
+        setShowImportModal(false)
+        setSuccessMessage('')
+      }, 3000)
+
+    } catch (error) {
+      console.error('File import error:', error)
+      setErrorMessage(error.message || 'Failed to import file')
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  const handleImportFromURL = async () => {
+    if (!importUrl.trim()) {
+      setErrorMessage('Please enter a calendar URL')
+      return
+    }
+
+    setIsImporting(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const formData = new FormData()
+      formData.append('url', importUrl.trim())
+      
+      // Add subscription option
+      if (subscribeToCalendar && subscriptionName.trim()) {
+        formData.append('subscribe', 'true')
+        formData.append('name', subscriptionName.trim())
+      }
+
+      const response = await fetch('/api/events/import-url', {
+        method: 'POST',
+        body: formData
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to import calendar')
+      }
+
+      setSuccessMessage(result.message || `Successfully imported ${result.successful} events`)
+      
+      // Refresh events
+      await loadEvents()
+      if (subscribeToCalendar) {
+        fetchCalendarSubscriptions()
+      }
+      
+      // Clear form
+      setImportUrl('')
+      setSubscriptionName('')
+      setSubscribeToCalendar(false)
+      
+      // Close modal after short delay
+      setTimeout(() => {
+        setShowImportModal(false)
+        setSuccessMessage('')
+      }, 3000)
+
+    } catch (error) {
+      console.error('URL import error:', error)
+      setErrorMessage(error.message || 'Failed to import calendar from URL')
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  // Invitation functions
+  const handleInviteEvent = (eventId) => {
+    setInviteEventId(eventId)
+    setShowInviteModal(true)
+    setInviteEmails([''])
+    setInviteMessage('')
+  }
+
+  const addEmailField = () => {
+    setInviteEmails([...inviteEmails, ''])
+  }
+
+  const removeEmailField = (index) => {
+    if (inviteEmails.length > 1) {
+      setInviteEmails(inviteEmails.filter((_, i) => i !== index))
+    }
+  }
+
+  const updateEmail = (index, value) => {
+    const newEmails = [...inviteEmails]
+    newEmails[index] = value
+    setInviteEmails(newEmails)
+  }
+
+  const sendInvitations = async () => {
+    const validEmails = inviteEmails.filter(email => email.trim() !== '')
+    
+    if (validEmails.length === 0) {
+      setError('Please enter at least one email address')
+      return
+    }
+
+    setIsSendingInvites(true)
+    setError(null)
+
+    try {
+      const result = await eventsApi.sendEventInvitation(inviteEventId, validEmails, inviteMessage)
+      
+      setImportResult({
+        message: result.message,
+        successful: result.successful,
+        failed: result.failed
+      })
+      
+      setShowInviteModal(false)
+      setInviteEventId(null)
+      setInviteEmails([''])
+      setInviteMessage('')
+      
+    } catch (error) {
+      console.error('Failed to send invitations:', error)
+      setError(`Failed to send invitations: ${error.message}`)
+    } finally {
+      setIsSendingInvites(false)
+    }
+  }
+
   // Chat functions
   const addEventToCalendar = async (eventData) => {
     if (!eventData) return
@@ -806,6 +1096,70 @@ const App = () => {
   const weekDates = getWeekDates()
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+  // Add calendar subscription management
+
+  // Fetch calendar subscriptions
+  const fetchCalendarSubscriptions = async () => {
+    try {
+      const response = await fetch('/api/calendar-subscriptions');
+      if (response.ok) {
+        const subscriptions = await response.json();
+        setCalendarSubscriptions(subscriptions);
+      }
+    } catch (error) {
+      console.error('Error fetching calendar subscriptions:', error);
+    }
+  };
+
+  // Delete calendar subscription
+  const deleteCalendarSubscription = async (subscriptionId) => {
+    if (!confirm('This will delete the subscription and all its events. Continue?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/calendar-subscriptions/${subscriptionId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setSuccessMessage('Calendar subscription deleted');
+        fetchCalendarSubscriptions();
+        fetchEvents();
+      } else {
+        throw new Error('Failed to delete subscription');
+      }
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  };
+
+  // Sync calendar subscription
+  const syncCalendarSubscription = async (subscriptionId) => {
+    try {
+      const response = await fetch(`/api/calendar-subscriptions/${subscriptionId}/sync`, {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        setSuccessMessage(result.message);
+        fetchEvents();
+        fetchCalendarSubscriptions();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  };
+
+  // Load subscriptions on component mount
+  useEffect(() => {
+    fetchCalendarSubscriptions();
+  }, []);
+
   return (
     <div className="app">
       <div className="app-layout">
@@ -831,6 +1185,28 @@ const App = () => {
               >
                 ›
               </button>
+              <div className="import-dropdown">
+                <button
+                  onClick={() => setShowDropdown(!showDropdown)}
+                  className="import-btn"
+                  title="Import calendar"
+                >
+                  📥 Import
+                </button>
+                {showDropdown && (
+                  <div className="import-dropdown-menu">
+                    <button onClick={() => { setShowImportModal(true); setImportMethod('file'); setShowDropdown(false); }}>
+                      📁 Upload .ics File
+                    </button>
+                    <button onClick={() => { setShowImportModal(true); setImportMethod('url'); setShowDropdown(false); }}>
+                      🔗 From URL
+                    </button>
+                    <button onClick={() => { setShowSubscriptions(true); setShowDropdown(false); }}>
+                      🔄 Manage Subscriptions
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={loadEvents}
                 disabled={isLoading}
@@ -841,9 +1217,284 @@ const App = () => {
             </div>
           </div>
 
+          {/* Hidden file input for import */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".ics,text/calendar"
+            onChange={handleFileImport}
+            style={{ display: 'none' }}
+          />
+
+          {/* Import Modal */}
+          {showImportModal && (
+            <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3>📁 Import Calendar</h3>
+                  <button className="close-btn" onClick={() => setShowImportModal(false)}>×</button>
+                </div>
+                
+                <div className="modal-body">
+                  <div className="import-tabs">
+                    <button 
+                      className={`tab-btn ${importMethod === 'file' ? 'active' : ''}`}
+                      onClick={() => setImportMethod('file')}
+                    >
+                      📄 Upload File
+                    </button>
+                    <button 
+                      className={`tab-btn ${importMethod === 'url' ? 'active' : ''}`}
+                      onClick={() => setImportMethod('url')}
+                    >
+                      🔗 From URL
+                    </button>
+                  </div>
+
+                  {importMethod === 'file' && (
+                    <div className="import-section">
+                      <div className="file-upload-area" onClick={() => document.getElementById('ics-file').click()}>
+                        <input
+                          type="file"
+                          id="ics-file"
+                          accept=".ics,.ical"
+                          onChange={handleFileSelect}
+                          style={{ display: 'none' }}
+                        />
+                        <div className="upload-icon">📁</div>
+                        <p>Click to select .ics file</p>
+                        <small>Maximum file size: 5MB</small>
+                      </div>
+
+                      {selectedFile && (
+                        <div className="selected-file">
+                          <span>📄 {selectedFile.name}</span>
+                          <button onClick={() => setSelectedFile(null)}>Remove</button>
+                        </div>
+                      )}
+
+                      <button 
+                        className="import-btn" 
+                        onClick={handleFileImport}
+                        disabled={!selectedFile || isImporting}
+                      >
+                        {isImporting ? 'Importing...' : 'Import Events'}
+                      </button>
+                    </div>
+                  )}
+
+                  {importMethod === 'url' && (
+                    <div className="import-section">
+                      <div className="url-import-help">
+                        <h4>📋 Getting Your Calendar URL:</h4>
+                        <div className="help-section">
+                          <strong>iCloud Calendar:</strong>
+                          <ol>
+                            <li>Open Calendar app or iCloud.com</li>
+                            <li>Right-click your calendar → "Share Calendar"</li>
+                            <li>Enable "Public Calendar" → Copy the URL</li>
+                          </ol>
+                        </div>
+                        <div className="help-section">
+                          <strong>Google Calendar:</strong>
+                          <ol>
+                            <li>Open Google Calendar</li>
+                            <li>Settings → Select your calendar</li>
+                            <li>Copy the "Public address in iCal format" URL</li>
+                          </ol>
+                        </div>
+                      </div>
+
+                      <input
+                        type="url"
+                        placeholder="Paste your calendar URL here..."
+                        value={importUrl}
+                        onChange={(e) => setImportUrl(e.target.value)}
+                        className="url-input"
+                      />
+
+                      {/* Subscription Option */}
+                      <div className="subscription-option">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={subscribeToCalendar}
+                            onChange={(e) => setSubscribeToCalendar(e.target.checked)}
+                          />
+                          <span className="subscription-icon">🔄</span>
+                          <strong>Subscribe for automatic updates</strong>
+                          <small>Keep this calendar synced with new events (checks every 30 minutes)</small>
+                        </label>
+                      </div>
+
+                      {subscribeToCalendar && (
+                        <input
+                          type="text"
+                          placeholder="Calendar name (e.g., 'Work Calendar', 'Family Events')"
+                          value={subscriptionName}
+                          onChange={(e) => setSubscriptionName(e.target.value)}
+                          className="subscription-name-input"
+                        />
+                      )}
+
+                      <button 
+                        className="import-btn" 
+                        onClick={handleImportFromURL}
+                        disabled={!importUrl.trim() || isImporting || (subscribeToCalendar && !subscriptionName.trim())}
+                      >
+                        {isImporting ? 'Importing...' : subscribeToCalendar ? 'Subscribe & Import' : 'Import Once'}
+                      </button>
+                    </div>
+                  )}
+
+                  {errorMessage && (
+                    <div className="error-message">
+                      ❌ {errorMessage}
+                    </div>
+                  )}
+
+                  {successMessage && (
+                    <div className="success-message">
+                      ✅ {successMessage}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Invitation Modal */}
+          {showInviteModal && (
+            <div className="modal-overlay">
+              <div className="modal-content">
+                <h3>Send Calendar Invitation</h3>
+                <p>Send this event as a calendar invitation via email:</p>
+                
+                <div className="invite-emails-container">
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                    Email Addresses:
+                  </label>
+                  {inviteEmails.map((email, index) => (
+                    <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => updateEmail(index, e.target.value)}
+                        placeholder="email@example.com"
+                        className="url-input"
+                        style={{ flex: 1 }}
+                        disabled={isSendingInvites}
+                      />
+                      {inviteEmails.length > 1 && (
+                        <button
+                          onClick={() => removeEmailField(index)}
+                          disabled={isSendingInvites}
+                          style={{
+                            padding: '8px 12px',
+                            backgroundColor: '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={addEmailField}
+                    disabled={isSendingInvites}
+                    style={{
+                      padding: '8px 12px',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '14px'
+                    }}
+                  >
+                    + Add Email
+                  </button>
+                </div>
+                
+                <div style={{ marginBottom: '16px', marginTop: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                    Optional Message:
+                  </label>
+                  <textarea
+                    value={inviteMessage}
+                    onChange={(e) => setInviteMessage(e.target.value)}
+                    placeholder="Add a personal message to the invitation..."
+                    disabled={isSendingInvites}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      minHeight: '80px',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+                
+                <div className="modal-help">
+                  <strong>How it works:</strong>
+                  <ul>
+                    <li>Recipients will receive an email with a calendar invitation</li>
+                    <li>Apple Mail, Gmail, and other email clients will automatically detect the invite</li>
+                    <li>Recipients can click to add the event directly to their calendar</li>
+                  </ul>
+                </div>
+
+                <div className="modal-actions">
+                  <button
+                    onClick={sendInvitations}
+                    disabled={isSendingInvites || inviteEmails.every(email => !email.trim())}
+                    className="import-url-btn"
+                  >
+                    {isSendingInvites ? '⏳ Sending...' : '📤 Send Invitations'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowInviteModal(false)
+                      setInviteEventId(null)
+                      setInviteEmails([''])
+                      setInviteMessage('')
+                    }}
+                    disabled={isSendingInvites}
+                    className="cancel-btn"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="error-message">
               {error}
+            </div>
+          )}
+
+          {importResult && (
+            <div className="success-message">
+              ✅ {importResult.message}
+              {importResult.failed > 0 && (
+                <div className="import-warnings">
+                  ⚠️ {importResult.failed} events failed to import
+                </div>
+              )}
+              <button 
+                onClick={() => setImportResult(null)}
+                className="close-message-btn"
+              >
+                ×
+              </button>
             </div>
           )}
 
@@ -1039,7 +1690,7 @@ const App = () => {
                         }}
                       >
                         {dayEvents.map(event => {
-                          const dimensions = calculateEventDimensions(event, date)
+                          const dimensions = calculateEventDimensions(event, date, events)
                           if (!dimensions) return null
                           
                           const eventStart = new Date(event.start)
@@ -1054,9 +1705,11 @@ const App = () => {
                               style={{
                                 position: 'absolute',
                                 top: `${dimensions.top}px`,
-                                left: '2px',
-                                right: '2px',
+                                left: `${dimensions.leftPercentage}%`,
+                                width: `${dimensions.widthPercentage}%`,
                                 height: `${dimensions.height}px`,
+                                paddingLeft: '2px',
+                                paddingRight: '2px',
                                 backgroundColor: event.color,
                                 color: 'white',
                                 borderRadius: '4px',
@@ -1073,25 +1726,32 @@ const App = () => {
                                 opacity: isBeingDragged ? 0.8 : 1,
                                 transform: isBeingDragged ? 'scale(1.02)' : 'scale(1)',
                                 transition: isBeingDragged ? 'none' : 'all 0.2s ease',
-                                pointerEvents: 'auto'
+                                pointerEvents: 'auto',
+                                boxSizing: 'border-box',
+                                minWidth: '60px', // Ensure minimum readable width
+                                maxWidth: '100%'  // Prevent overflow past column
                               }}
                               onMouseEnter={(e) => {
                                 const deleteBtn = e.currentTarget.querySelector('.delete-button')
+                                const inviteBtn = e.currentTarget.querySelector('.invite-button')
                                 if (deleteBtn) deleteBtn.style.opacity = '1'
+                                if (inviteBtn) inviteBtn.style.opacity = '1'
                               }}
                               onMouseLeave={(e) => {
                                 const deleteBtn = e.currentTarget.querySelector('.delete-button')
+                                const inviteBtn = e.currentTarget.querySelector('.invite-button')
                                 if (deleteBtn) deleteBtn.style.opacity = '0'
+                                if (inviteBtn) inviteBtn.style.opacity = '0'
                               }}
                             >
-                              {/* Drag area - covers most of the event */}
+                              {/* Drag area - covers most of the event but leaves space for buttons */}
                               <div
                                 onMouseDown={(e) => handleEventMouseDown(e, event)}
                                 style={{
                                   position: 'absolute',
                                   top: '4px',
-                                  left: '2px',
-                                  right: '18px',
+                                  left: '4px',
+                                  right: dimensions.widthPercentage > 35 ? '25px' : '18px',
                                   bottom: '6px',
                                   cursor: 'grab',
                                   zIndex: 1,
@@ -1111,8 +1771,8 @@ const App = () => {
                                 style={{
                                   position: 'absolute',
                                   top: '0',
-                                  left: '0',
-                                  right: '0',
+                                  left: '2px',
+                                  right: '2px',
                                   height: '4px',
                                   cursor: 'ns-resize',
                                   backgroundColor: 'transparent',
@@ -1121,89 +1781,187 @@ const App = () => {
                                 }}
                               />
                               
-                              {editingEventId === event.id ? (
-                                <input
-                                  type="text"
-                                  value={editingTitle}
-                                  onChange={(e) => setEditingTitle(e.target.value)}
-                                  onBlur={() => {
-                                    if (editingTitle.trim()) {
-                                      updateEventInDatabase(event.id, { title: editingTitle.trim() })
-                                        .then(updatedEvent => {
-                                          setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
-                                        })
-                                        .catch(error => {
-                                          console.error('Failed to update title:', error)
-                                        })
-                                    }
-                                    setEditingEventId(null)
-                                    setEditingTitle('')
-                                  }}
-                                  onKeyPress={(e) => {
-                                    if (e.key === 'Enter') {
-                                      if (editingTitle.trim()) {
-                                        updateEventInDatabase(event.id, { title: editingTitle.trim() })
-                                          .then(updatedEvent => {
-                                            setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
-                                          })
-                                          .catch(error => {
-                                            console.error('Failed to update title:', error)
-                                          })
-                                      }
-                                      setEditingEventId(null)
-                                      setEditingTitle('')
-                                    }
-                                    if (e.key === 'Escape') {
-                                      setEditingEventId(null)
-                                      setEditingTitle('')
-                                    }
-                                  }}
-                                  autoFocus
-                                  style={{
-                                    fontWeight: '600',
-                                    fontSize: '12px',
-                                    padding: '2px 4px',
-                                    border: '1px solid #3b82f6',
-                                    borderRadius: '2px',
-                                    backgroundColor: 'white',
-                                    color: '#1f2937',
-                                    outline: 'none',
-                                    width: '100%',
-                                    zIndex: 100
-                                  }}
-                                />
-                              ) : (
-                                <div 
-                                  className="event-title"
-                                  onClick={() => {
-                                    setEditingEventId(event.id)
-                                    setEditingTitle(event.title)
-                                  }}
-                                  style={{ 
-                                    fontWeight: '600', 
-                                    marginBottom: '2px',
-                                    cursor: 'pointer',
-                                    padding: '2px 4px',
-                                    borderRadius: '2px',
-                                    transition: 'background-color 0.2s',
-                                    position: 'relative',
-                                    zIndex: 100,
-                                    pointerEvents: 'auto'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.target.style.backgroundColor = 'transparent'
-                                  }}
-                                >
-                                  {event.title}
+                              {/* Title, duration, and buttons container */}
+                              <div style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'space-between',
+                                position: 'relative',
+                                marginBottom: '2px'
+                              }}>
+                                {/* Title and duration section - takes available space */}
+                                <div style={{ 
+                                  flex: 1, 
+                                  minWidth: 0, // Allows flex item to shrink below content size
+                                  marginRight: '4px'
+                                }}>
+                                  {editingEventId === event.id ? (
+                                    <input
+                                      type="text"
+                                      value={editingTitle}
+                                      onChange={(e) => setEditingTitle(e.target.value)}
+                                      onBlur={() => {
+                                        if (editingTitle.trim()) {
+                                          updateEventInDatabase(event.id, { title: editingTitle.trim() })
+                                            .then(updatedEvent => {
+                                              setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
+                                            })
+                                            .catch(error => {
+                                              console.error('Failed to update title:', error)
+                                            })
+                                        }
+                                        setEditingEventId(null)
+                                        setEditingTitle('')
+                                      }}
+                                      onKeyPress={(e) => {
+                                        if (e.key === 'Enter') {
+                                          if (editingTitle.trim()) {
+                                            updateEventInDatabase(event.id, { title: editingTitle.trim() })
+                                              .then(updatedEvent => {
+                                                setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
+                                              })
+                                              .catch(error => {
+                                                console.error('Failed to update title:', error)
+                                              })
+                                          }
+                                          setEditingEventId(null)
+                                          setEditingTitle('')
+                                        }
+                                        if (e.key === 'Escape') {
+                                          setEditingEventId(null)
+                                          setEditingTitle('')
+                                        }
+                                      }}
+                                      autoFocus
+                                      style={{
+                                        fontWeight: '600',
+                                        fontSize: '12px',
+                                        padding: '2px 4px',
+                                        border: '1px solid #3b82f6',
+                                        borderRadius: '2px',
+                                        backgroundColor: 'white',
+                                        color: '#1f2937',
+                                        outline: 'none',
+                                        width: '100%',
+                                        zIndex: 100
+                                      }}
+                                    />
+                                  ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                                      <div 
+                                        className="event-title"
+                                        onClick={() => {
+                                          setEditingEventId(event.id)
+                                          setEditingTitle(event.title)
+                                        }}
+                                        style={{ 
+                                          fontWeight: '600', 
+                                          cursor: 'pointer',
+                                          padding: '2px 4px',
+                                          borderRadius: '2px',
+                                          transition: 'background-color 0.2s',
+                                          position: 'relative',
+                                          zIndex: 100,
+                                          pointerEvents: 'auto',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                          fontSize: '12px'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.target.style.backgroundColor = 'transparent'
+                                        }}
+                                      >
+                                        {event.title}
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '10px', 
+                                        opacity: 0.9, 
+                                        paddingLeft: '4px',
+                                        color: 'rgba(255, 255, 255, 0.9)'
+                                      }}>
+                                        {eventStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        {duration >= 60 && ` - ${eventEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                              
-                              <div style={{ fontSize: '10px', opacity: 0.9, position: 'relative', zIndex: 5 }}>
-                                {eventStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                {duration >= 60 && ` - ${eventEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                                
+                                {/* Buttons section - fixed width */}
+                                <div style={{ 
+                                  display: 'flex', 
+                                  gap: '2px',
+                                  flexShrink: 0 // Prevents buttons from shrinking
+                                }}>
+                                  {dimensions.widthPercentage > 35 && (
+                                    <div
+                                      className="invite-button"
+                                      onClick={() => {
+                                        handleInviteEvent(event.id)
+                                      }}
+                                      style={{
+                                        width: '16px',
+                                        height: '16px',
+                                        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                                        borderRadius: '50%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '8px',
+                                        cursor: 'pointer',
+                                        opacity: 0,
+                                        transition: 'opacity 0.2s',
+                                        zIndex: 20,
+                                        pointerEvents: 'auto'
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.target.style.backgroundColor = 'rgba(59, 130, 246, 1)'
+                                        e.target.style.opacity = '1'
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.8)'
+                                        e.target.style.opacity = '0'
+                                      }}
+                                    >
+                                      ✉️
+                                    </div>
+                                  )}
+                                  
+                                  <div
+                                    className="delete-button"
+                                    onClick={() => {
+                                      deleteEvent(event.id)
+                                    }}
+                                    style={{
+                                      width: dimensions.widthPercentage > 35 ? '16px' : '14px',
+                                      height: dimensions.widthPercentage > 35 ? '16px' : '14px',
+                                      backgroundColor: 'rgba(220, 38, 38, 0.8)',
+                                      borderRadius: '50%',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      fontSize: dimensions.widthPercentage > 35 ? '10px' : '8px',
+                                      cursor: 'pointer',
+                                      opacity: 0,
+                                      transition: 'opacity 0.2s',
+                                      zIndex: 20,
+                                      pointerEvents: 'auto'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.target.style.backgroundColor = 'rgba(220, 38, 38, 1)'
+                                      e.target.style.opacity = '1'
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.target.style.backgroundColor = 'rgba(220, 38, 38, 0.8)'
+                                      e.target.style.opacity = '0'
+                                    }}
+                                  >
+                                    ×
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Bottom resize handle */}
@@ -1218,8 +1976,8 @@ const App = () => {
                                 style={{
                                   position: 'absolute',
                                   bottom: '0',
-                                  left: '0',
-                                  right: '0',
+                                  left: '2px',
+                                  right: '2px',
                                   height: '6px',
                                   cursor: 'ns-resize',
                                   backgroundColor: 'transparent',
@@ -1228,41 +1986,7 @@ const App = () => {
                                 }}
                               />
                               
-                              {/* Delete button */}
-                              <div
-                                className="delete-button"
-                                onClick={() => {
-                                  deleteEvent(event.id)
-                                }}
-                                style={{
-                                  position: 'absolute',
-                                  top: '2px',
-                                  right: '2px',
-                                  width: '16px',
-                                  height: '16px',
-                                  backgroundColor: 'rgba(220, 38, 38, 0.8)',
-                                  borderRadius: '50%',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '10px',
-                                  cursor: 'pointer',
-                                  opacity: 0,
-                                  transition: 'opacity 0.2s',
-                                  zIndex: 20,
-                                  pointerEvents: 'auto'
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.target.style.backgroundColor = 'rgba(220, 38, 38, 1)'
-                                  e.target.style.opacity = '1'
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.target.style.backgroundColor = 'rgba(220, 38, 38, 0.8)'
-                                  e.target.style.opacity = '0'
-                                }}
-                              >
-                                ×
-                              </div>
+
                             </div>
                           )
                         })}
@@ -1563,6 +2287,70 @@ const App = () => {
               >
                 Create
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Modal */}
+      {showSubscriptions && (
+        <div className="modal-overlay" onClick={() => setShowSubscriptions(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>🔄 Calendar Subscriptions</h3>
+              <button className="close-btn" onClick={() => setShowSubscriptions(false)}>×</button>
+            </div>
+            
+            <div className="modal-body">
+              {calendarSubscriptions.length === 0 ? (
+                <div className="no-subscriptions">
+                  <p>No calendar subscriptions yet.</p>
+                  <p>Use "🔗 From URL" with the subscribe option to add automatic calendar syncing.</p>
+                </div>
+              ) : (
+                <div className="subscriptions-list">
+                  {calendarSubscriptions.map(subscription => (
+                    <div key={subscription.id} className="subscription-item">
+                      <div className="subscription-info">
+                        <h4>{subscription.name}</h4>
+                        <p className="subscription-url">{subscription.url}</p>
+                        <small>
+                          Last synced: {subscription.last_sync ? 
+                            new Date(subscription.last_sync).toLocaleString() : 
+                            'Never'
+                          }
+                        </small>
+                      </div>
+                      <div className="subscription-actions">
+                        <button 
+                          className="sync-btn"
+                          onClick={() => syncCalendarSubscription(subscription.id)}
+                        >
+                          🔄 Sync Now
+                        </button>
+                        <button 
+                          className="delete-btn"
+                          onClick={() => deleteCalendarSubscription(subscription.id)}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {errorMessage && (
+                <div className="error-message">
+                  ❌ {errorMessage}
+                </div>
+              )}
+
+              {successMessage && (
+                <div className="success-message">
+                  ✅ {successMessage}
+                </div>
+              )}
             </div>
           </div>
         </div>

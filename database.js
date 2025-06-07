@@ -9,6 +9,7 @@ const db = new sqlite3.Database(dbPath);
 const initDatabase = () => {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
+      // Create events table
       db.run(`CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -16,15 +17,33 @@ const initDatabase = () => {
         end_time DATETIME NOT NULL,
         color TEXT DEFAULT '#3b82f6',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        source_calendar_id INTEGER DEFAULT NULL,
+        source_event_uid TEXT DEFAULT NULL
       )`, (err) => {
         if (err) {
           console.error('Error creating events table:', err);
-          reject(err);
-        } else {
-          console.log('Events table created or already exists');
-          resolve();
+          return reject(err);
         }
+        
+        // Create calendar subscriptions table
+        db.run(`CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL UNIQUE,
+          color TEXT DEFAULT '#3b82f6',
+          last_sync DATETIME DEFAULT NULL,
+          sync_enabled BOOLEAN DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) {
+            console.error('Error creating calendar_subscriptions table:', err);
+            reject(err);
+          } else {
+            console.log('Events and calendar_subscriptions tables created or already exist');
+            resolve();
+          }
+        });
       });
     });
   });
@@ -309,6 +328,266 @@ const closeDatabase = () => {
   });
 };
 
+// Batch import events (for iCal import)
+const importEvents = (eventsData) => {
+  return new Promise((resolve, reject) => {
+    if (!eventsData || eventsData.length === 0) {
+      return resolve({
+        imported: [],
+        errors: [],
+        total: 0,
+        successful: 0,
+        failed: 0
+      });
+    }
+
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+      
+      const stmt = db.prepare('INSERT INTO events (title, start_time, end_time, color) VALUES (?, ?, ?, ?)');
+      const importedEvents = [];
+      const errors = [];
+      let completed = 0;
+      
+      const processResults = () => {
+        if (completed === eventsData.length) {
+          stmt.finalize((err) => {
+            if (err) {
+              console.error('Error finalizing statement:', err);
+              db.run('ROLLBACK');
+              reject(err);
+            } else {
+              db.run('COMMIT', (commitErr) => {
+                if (commitErr) {
+                  console.error('Error committing transaction:', commitErr);
+                  reject(commitErr);
+                } else {
+                  resolve({
+                    imported: importedEvents,
+                    errors: errors,
+                    total: eventsData.length,
+                    successful: importedEvents.length,
+                    failed: errors.length
+                  });
+                }
+              });
+            }
+          });
+        }
+      };
+      
+      eventsData.forEach((eventData, index) => {
+        const { title, start, end, color = '#10b981' } = eventData;
+        
+        stmt.run([title, start.toISOString(), end.toISOString(), color], function(err) {
+          completed++;
+          
+          if (err) {
+            console.error(`Error importing event ${index + 1} (${title}):`, err);
+            errors.push({ 
+              index: index + 1, 
+              error: err.message, 
+              title: title || 'Untitled Event' 
+            });
+          } else {
+            importedEvents.push({
+              id: this.lastID,
+              title,
+              start,
+              end,
+              color
+            });
+          }
+          
+          processResults();
+        });
+      });
+    });
+  });
+};
+
+// Add calendar subscription
+const addCalendarSubscription = (subscriptionData) => {
+  return new Promise((resolve, reject) => {
+    const { name, url, color = '#3b82f6' } = subscriptionData;
+    
+    db.run(
+      'INSERT INTO calendar_subscriptions (name, url, color) VALUES (?, ?, ?)',
+      [name, url, color],
+      function(err) {
+        if (err) {
+          if (err.code === 'SQLITE_CONSTRAINT') {
+            reject(new Error('Calendar URL already subscribed'));
+          } else {
+            reject(err);
+          }
+        } else {
+          resolve({
+            id: this.lastID,
+            name,
+            url,
+            color,
+            sync_enabled: 1,
+            created_at: new Date()
+          });
+        }
+      }
+    );
+  });
+};
+
+// Get all calendar subscriptions
+const getCalendarSubscriptions = () => {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM calendar_subscriptions ORDER BY created_at', (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+};
+
+// Update calendar subscription sync time
+const updateCalendarSync = (subscriptionId, lastSync = new Date()) => {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE calendar_subscriptions SET last_sync = ? WHERE id = ?',
+      [lastSync.toISOString(), subscriptionId],
+      function(err) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ updated: this.changes });
+        }
+      }
+    );
+  });
+};
+
+// Delete calendar subscription and its events
+const deleteCalendarSubscription = (subscriptionId) => {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+      
+      // Delete events from this calendar
+      db.run('DELETE FROM events WHERE source_calendar_id = ?', [subscriptionId], (err) => {
+        if (err) {
+          db.run('ROLLBACK');
+          return reject(err);
+        }
+        
+        // Delete the subscription
+        db.run('DELETE FROM calendar_subscriptions WHERE id = ?', [subscriptionId], (err) => {
+          if (err) {
+            db.run('ROLLBACK');
+            reject(err);
+          } else {
+            db.run('COMMIT', (err) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve({ deleted: true });
+              }
+            });
+          }
+        });
+      });
+    });
+  });
+};
+
+// Import events with calendar subscription tracking
+const importEventsFromSubscription = (subscriptionId, eventsData) => {
+  return new Promise((resolve, reject) => {
+    if (!eventsData || eventsData.length === 0) {
+      return resolve({
+        imported: [],
+        updated: 0,
+        errors: [],
+        total: 0,
+        successful: 0,
+        failed: 0
+      });
+    }
+
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+      
+      // First, delete existing events from this calendar to avoid duplicates
+      db.run('DELETE FROM events WHERE source_calendar_id = ?', [subscriptionId], (err) => {
+        if (err) {
+          db.run('ROLLBACK');
+          return reject(err);
+        }
+        
+        // Now import new events
+        const stmt = db.prepare('INSERT INTO events (title, start_time, end_time, color, source_calendar_id, source_event_uid) VALUES (?, ?, ?, ?, ?, ?)');
+        const importedEvents = [];
+        const errors = [];
+        let completed = 0;
+        
+        const processResults = () => {
+          if (completed === eventsData.length) {
+            stmt.finalize((err) => {
+              if (err) {
+                console.error('Error finalizing statement:', err);
+                db.run('ROLLBACK');
+                reject(err);
+              } else {
+                db.run('COMMIT', (commitErr) => {
+                  if (commitErr) {
+                    console.error('Error committing transaction:', commitErr);
+                    reject(commitErr);
+                  } else {
+                    resolve({
+                      imported: importedEvents,
+                      errors: errors,
+                      total: eventsData.length,
+                      successful: importedEvents.length,
+                      failed: errors.length
+                    });
+                  }
+                });
+              }
+            });
+          }
+        };
+        
+        eventsData.forEach((eventData, index) => {
+          const { title, start, end, color, uid } = eventData;
+          
+          stmt.run([title, start.toISOString(), end.toISOString(), color, subscriptionId, uid || null], function(err) {
+            completed++;
+            
+            if (err) {
+              console.error(`Error importing event ${index + 1} (${title}):`, err);
+              errors.push({ 
+                index: index + 1, 
+                error: err.message, 
+                title: title || 'Untitled Event' 
+              });
+            } else {
+              importedEvents.push({
+                id: this.lastID,
+                title,
+                start,
+                end,
+                color,
+                source_calendar_id: subscriptionId
+              });
+            }
+            
+            processResults();
+          });
+        });
+      });
+    });
+  });
+};
+
 module.exports = {
   initDatabase,
   getAllEvents,
@@ -321,5 +600,11 @@ module.exports = {
   getEventsForPeriod,
   isTimeSlotFree,
   getCalendarStats,
-  closeDatabase
+  closeDatabase,
+  importEvents,
+  addCalendarSubscription,
+  getCalendarSubscriptions,
+  updateCalendarSync,
+  deleteCalendarSubscription,
+  importEventsFromSubscription
 }; 

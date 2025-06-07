@@ -1,6 +1,26 @@
 # Tilly - AI-Powered Calendar Assistant
 
-A modern React calendar application with AI-powered natural language event scheduling using Claude (Anthropic API).
+A modern React calendar application with AI-powered natural language event scheduling using Claude (Anthropic API), iCal import/export, and email calendar invitations.
+
+## 📧 Email Configuration (For Calendar Invitations)
+
+To enable calendar invitations, create a `.env` file in the root directory with:
+
+```env
+# Anthropic API Key (required for AI features)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Email Configuration (required for calendar invitations)
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+
+# For Gmail:
+# 1. Enable 2-factor authentication
+# 2. Generate an "App Password" (not your regular password)
+# 3. Use the app password as EMAIL_PASS
+```
+
+**Note**: For production, consider using dedicated email services like SendGrid, AWS SES, or Mailgun.
 
 ## Screenshot
 

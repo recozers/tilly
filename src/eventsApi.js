@@ -113,4 +113,59 @@ export const deleteEvent = async (id) => {
     console.error('Error deleting event:', error);
     throw error;
   }
+};
+
+// Import iCal file
+export const importICalFile = async (file) => {
+  try {
+    const formData = new FormData();
+    formData.append('icalFile', file);
+    
+    const response = await fetch(`${API_BASE_URL}/events/import`, {
+      method: 'POST',
+      body: formData,
+      // Don't set Content-Type header - let browser set it with boundary for FormData
+    });
+    
+    return await handleResponse(response);
+  } catch (error) {
+    console.error('Error importing iCal file:', error);
+    throw error;
+  }
+};
+
+// Import from calendar URL (iCloud, Google Calendar sharing URLs)
+export const importFromCalendarURL = async (url) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/events/import-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+    });
+    
+    return await handleResponse(response);
+  } catch (error) {
+    console.error('Error importing from calendar URL:', error);
+    throw error;
+  }
+};
+
+// Send calendar invitation via email
+export const sendEventInvitation = async (eventId, emails, message = '') => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/events/${eventId}/invite`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ emails, message }),
+    });
+    
+    return await handleResponse(response);
+  } catch (error) {
+    console.error('Error sending event invitation:', error);
+    throw error;
+  }
 }; 

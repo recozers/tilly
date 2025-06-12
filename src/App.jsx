@@ -1,13 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
 import { parseEventRequest } from './claudeApi.js'
 import * as eventsApi from './eventsApi.js'
+import { useAuth } from './contexts/AuthContext'
+import { supabase } from './lib/supabase'
+import AuthModal from './components/Auth/AuthModal'
+import UserProfile from './components/Auth/UserProfile'
 import './App.css'
 
 const App = () => {
+  const { user, loading: authLoading } = useAuth()
   const [events, setEvents] = useState([])
   const eventsRef = useRef([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  
+  // Auth state
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showUserProfile, setShowUserProfile] = useState(false)
 
 
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -86,10 +95,12 @@ const App = () => {
     return () => clearTimeout(timer)
   }, []) // Only run on initial mount
 
-  // Load events from database on component mount
+  // Load events from database when user is authenticated
   useEffect(() => {
-    loadEvents()
-  }, [])
+    if (user) {
+      loadEvents()
+    }
+  }, [user])
 
   // Keep eventsRef in sync with events state
   useEffect(() => {
@@ -407,7 +418,7 @@ const App = () => {
         title: title.trim(),
         start: newEventData.start,
         end: newEventData.end,
-        color: '#3b82f6'
+        color: '#4A7C2A'
       })
 
       setEvents(prev => [...prev, newEvent])
@@ -715,6 +726,12 @@ const App = () => {
     setSuccessMessage('')
 
     try {
+      // Get auth headers
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+      
       const formData = new FormData()
       formData.append('url', importUrl.trim())
       
@@ -726,6 +743,7 @@ const App = () => {
 
       const response = await fetch('/api/events/import-url', {
         method: 'POST',
+        headers,
         body: formData
       })
 
@@ -820,220 +838,11 @@ const App = () => {
   }
 
   // Chat functions
-  const addEventToCalendar = async (eventData) => {
-    if (!eventData) return
+  // Legacy function - now handled by tool-based API
+  // Keeping for backwards compatibility but no longer used
 
-    console.log('🔍 DEBUG: Adding AI event to calendar:', eventData)
-
-    try {
-      // Shared robust time parsing function
-      const parseTimeString = (timeString, label) => {
-        console.log(`🔍 DEBUG: Parsing ${label}: "${timeString}"`)
-        
-        // If it already has 'Z', it's UTC
-        if (timeString.endsWith('Z')) {
-          const date = new Date(timeString)
-          console.log(`🔍 DEBUG: ${label} is UTC: ${date.toISOString()}`)
-          return date
-        }
-        
-        // If it doesn't have 'T', add time component
-        if (!timeString.includes('T')) {
-          timeString += 'T00:00:00'
-          console.log(`🔍 DEBUG: Added time component to ${label}: "${timeString}"`)
-        }
-        
-        // Treat as local time and convert properly
-        const localDate = new Date(timeString)
-        console.log(`🔍 DEBUG: ${label} parsed as local: ${localDate.toString()}`)
-        console.log(`🔍 DEBUG: ${label} converted to UTC: ${localDate.toISOString()}`)
-        
-        // Validate the parsed date
-        if (isNaN(localDate.getTime())) {
-          throw new Error(`Invalid ${label.toLowerCase()} time: "${timeString}"`)
-        }
-        
-        return localDate
-      }
-
-      let startTime, endTime
-      
-      try {
-        startTime = parseTimeString(eventData.start, 'Start time')
-        endTime = parseTimeString(eventData.end, 'End time')
-      } catch (parseError) {
-        console.error(`🚨 ERROR: Time parsing failed for AI event:`, parseError)
-        throw new Error(`Failed to parse event time: ${parseError.message}`)
-      }
-      
-      // Validate that start is before end
-      if (startTime >= endTime) {
-        console.error(`🚨 ERROR: Invalid time range for AI event: start (${startTime.toISOString()}) >= end (${endTime.toISOString()})`)
-        throw new Error(`Invalid time range: start time must be before end time`)
-      }
-
-      console.log(`🔍 DEBUG: Final validated AI event times:`)
-      console.log(`  Title: "${eventData.title}"`)
-      console.log(`  Start: ${startTime.toISOString()} (${startTime.toLocaleString()})`)
-      console.log(`  End: ${endTime.toISOString()} (${endTime.toLocaleString()})`)
-
-      const newEvent = await eventsApi.createEvent({
-        title: eventData.title,
-        start: startTime,
-        end: endTime,
-        color: '#3b82f6'
-      })
-      
-      console.log(`🔍 DEBUG: Successfully created AI event in database:`, newEvent)
-      setEvents(prev => [...prev, newEvent])
-      
-      const confirmationMessage = {
-        id: (Date.now() + 1).toString(),
-        text: `✅ Event added: "${eventData.title}" on ${startTime.toLocaleDateString()} at ${startTime.toLocaleTimeString()}`,
-        sender: 'bot',
-        timestamp: new Date(),
-      }
-      setMessages(currentMessages => [...currentMessages, confirmationMessage])
-    } catch (error) {
-      console.error('🚨 ERROR: Failed to add AI event to calendar:', error)
-      const errorMessage = {
-        id: (Date.now() + 1).toString(),
-        text: `❌ Failed to add event: ${error.message || 'Unknown error'}. Please try again.`,
-        sender: 'bot',
-        timestamp: new Date(),
-      }
-      setMessages(currentMessages => [...currentMessages, errorMessage])
-    }
-  }
-
-  const rearrangeEvents = async (rearrangements) => {
-    if (!rearrangements || rearrangements.length === 0) return
-
-    console.log('🔍 DEBUG: Received rearrangements:', rearrangements)
-
-    try {
-      // Update each event
-      const updatePromises = rearrangements.map(async (rearrangement) => {
-        console.log(`🔍 DEBUG: Processing rearrangement for event ID ${rearrangement.eventId} (${rearrangement.currentTitle})`)
-        console.log(`🔍 DEBUG: Raw time strings - Start: "${rearrangement.newStart}", End: "${rearrangement.newEnd}"`)
-        
-        // More robust time parsing with validation
-        const parseTimeString = (timeString, label) => {
-          console.log(`🔍 DEBUG: Parsing ${label}: "${timeString}"`)
-          
-          // If it already has 'Z', it's UTC
-          if (timeString.endsWith('Z')) {
-            const date = new Date(timeString)
-            console.log(`🔍 DEBUG: ${label} is UTC: ${date.toISOString()}`)
-            return date
-          }
-          
-          // If it doesn't have 'T', add time component
-          if (!timeString.includes('T')) {
-            timeString += 'T00:00:00'
-            console.log(`🔍 DEBUG: Added time component to ${label}: "${timeString}"`)
-          }
-          
-          // Treat as local time and convert properly
-          const localDate = new Date(timeString)
-          console.log(`🔍 DEBUG: ${label} parsed as local: ${localDate.toString()}`)
-          console.log(`🔍 DEBUG: ${label} converted to UTC: ${localDate.toISOString()}`)
-          
-          // Validate the parsed date
-          if (isNaN(localDate.getTime())) {
-            throw new Error(`Invalid ${label.toLowerCase()} time: "${timeString}"`)
-          }
-          
-          return localDate
-        }
-        
-        let startTime, endTime
-        
-        try {
-          startTime = parseTimeString(rearrangement.newStart, 'Start time')
-          endTime = parseTimeString(rearrangement.newEnd, 'End time')
-        } catch (parseError) {
-          console.error(`🚨 ERROR: Time parsing failed for event ${rearrangement.eventId}:`, parseError)
-          throw new Error(`Failed to parse time for "${rearrangement.currentTitle}": ${parseError.message}`)
-        }
-        
-        // Validate that start is before end
-        if (startTime >= endTime) {
-          console.error(`🚨 ERROR: Invalid time range for event ${rearrangement.eventId}: start (${startTime.toISOString()}) >= end (${endTime.toISOString()})`)
-          throw new Error(`Invalid time range for "${rearrangement.currentTitle}": start time must be before end time`)
-        }
-        
-        console.log(`🔍 DEBUG: Final validated times for event ${rearrangement.eventId}:`)
-        console.log(`  Start: ${startTime.toISOString()} (${startTime.toLocaleString()})`)
-        console.log(`  End: ${endTime.toISOString()} (${endTime.toLocaleString()})`)
-        
-        const result = await updateEventInDatabase(rearrangement.eventId, {
-          start: startTime,
-          end: endTime
-        })
-        
-        console.log(`🔍 DEBUG: Successfully updated event ${rearrangement.eventId} in database`)
-        return result
-      })
-
-      const updatedEvents = await Promise.all(updatePromises)
-      console.log('🔍 DEBUG: All events updated successfully:', updatedEvents.map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end })))
-      
-      // Update local state with all the updated events
-      setEvents(prev => {
-        return prev.map(event => {
-          const updatedEvent = updatedEvents.find(updated => updated.id === event.id)
-          return updatedEvent || event
-        })
-      })
-      
-      const confirmationMessage = {
-        id: (Date.now() + 1).toString(),
-        text: `✅ Events rearranged successfully! ${rearrangements.map(r => `"${r.currentTitle}" moved to ${new Date(r.newStart).toLocaleTimeString()}`).join(', ')}`,
-        sender: 'bot',
-        timestamp: new Date(),
-      }
-      setMessages(currentMessages => [...currentMessages, confirmationMessage])
-    } catch (error) {
-      console.error('🚨 ERROR: Failed to rearrange events:', error)
-      const errorMessage = {
-        id: (Date.now() + 1).toString(),
-        text: `❌ Failed to rearrange events: ${error.message || 'Unknown error'}. Please try again.`,
-        sender: 'bot',
-        timestamp: new Date(),
-      }
-      setMessages(currentMessages => [...currentMessages, errorMessage])
-    }
-  }
-
-  const handleMultipleActions = async (actions) => {
-    try {
-      // Execute each action in sequence
-      for (const action of actions) {
-        if (action.type === 'event_rearrangement' && action.rearrangements) {
-          await rearrangeEvents(action.rearrangements)
-        } else if (action.type === 'event_suggestion' && action.eventData) {
-          await addEventToCalendar(action.eventData)
-        }
-      }
-      
-      // Clear the multiple actions from the message
-      setMessages(currentMessages => 
-        currentMessages.map(msg => 
-          msg.multipleActions 
-            ? { ...msg, multipleActions: undefined }
-            : msg
-        )
-      )
-      
-      // Refresh events to show the changes
-      await loadEvents()
-      
-    } catch (error) {
-      console.error('Error executing multiple actions:', error)
-      setErrorMessage('Failed to execute all actions. Some may have been completed.')
-    }
-  }
+  // Legacy functions - now handled by tool-based API
+  // Keeping for backwards compatibility but no longer used
 
   const handleSendMessage = async () => {
     if (inputMessage.trim() === '' || isProcessing) return
@@ -1052,23 +861,26 @@ const App = () => {
     setInputMessage('')
 
     try {
-      // Get current messages for context (exclude the user message we just added to avoid duplication)
-      const chatHistory = messages.filter(msg => 
-        !msg.pendingEvent && !msg.pendingRearrangements // Exclude action prompts
-      ).map(msg => ({
+      // Get current messages for context (simplified - no more action filtering)
+      const chatHistory = messages.map(msg => ({
         text: msg.text,
         sender: msg.sender,
         timestamp: msg.timestamp
       }))
 
-      // Use the new AI calendar query endpoint with chat history
-      const response = await fetch('/api/calendar/query', {
+      // Get auth headers
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+
+      // Use the new clean tool-based AI endpoint
+      const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({ 
-          query: messageText,
+          message: messageText,
           chatHistory: chatHistory
         }),
       })
@@ -1079,28 +891,27 @@ const App = () => {
 
       const data = await response.json()
       
-      // Check if the response is a structured event suggestion, rearrangement, or multiple actions
-      if (typeof data.response === 'object' && (data.response.type === 'event_suggestion' || data.response.type === 'event_rearrangement' || data.response.type === 'multiple_actions')) {
-        const botMessage = {
-          id: (Date.now() + 1).toString(),
-          text: data.response.message,
-          sender: 'bot',
-          timestamp: new Date(),
-          pendingEvent: data.response.type === 'event_suggestion' ? data.response.eventData : null,
-          pendingRearrangements: data.response.type === 'event_rearrangement' ? data.response.rearrangements : null,
-          multipleActions: data.response.type === 'multiple_actions' ? data.response.actions : null
-        }
-        setMessages(currentMessages => [...currentMessages, botMessage])
-      } else {
-        // Regular text response
-        const botMessage = {
-          id: (Date.now() + 1).toString(),
-          text: data.response,
-          sender: 'bot',
-          timestamp: new Date(),
-        }
-        setMessages(currentMessages => [...currentMessages, botMessage])
+      // Create bot response message
+      let botResponseText = data.response
+      
+      // If there were tool executions, log them and refresh calendar if needed
+      if (data.toolResults && data.toolResults.length > 0) {
+        console.log('🔧 Tool executions:', data.toolResults)
       }
+      
+      // Refresh calendar if events were changed
+      if (data.hasEventChanges) {
+        console.log('🔄 Refreshing calendar due to event changes')
+        await loadEvents()
+      }
+
+      const botMessage = {
+        id: (Date.now() + 1).toString(),
+        text: botResponseText,
+        sender: 'bot',
+        timestamp: new Date(),
+      }
+      setMessages(currentMessages => [...currentMessages, botMessage])
 
     } catch (error) {
       console.error('Error processing message:', error)
@@ -1130,8 +941,15 @@ const App = () => {
 
   // Fetch calendar subscriptions
   const fetchCalendarSubscriptions = async () => {
+    if (!user) return // Don't fetch if not authenticated
+    
     try {
-      const response = await fetch('/api/calendar-subscriptions');
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+      
+      const response = await fetch('/api/calendar-subscriptions', { headers });
       if (response.ok) {
         const subscriptions = await response.json();
         setCalendarSubscriptions(subscriptions);
@@ -1185,21 +1003,72 @@ const App = () => {
     }
   };
 
-  // Load subscriptions on component mount
+  // Load subscriptions when user is authenticated
   useEffect(() => {
-    fetchCalendarSubscriptions();
-  }, []);
+    if (user) {
+      fetchCalendarSubscriptions();
+    }
+  }, [user]);
+
+  // Show sign-in prompt if not authenticated
+  if (!user) {
+    return (
+      <div className="app">
+        <div className="unauthenticated-view">
+          <div className="auth-prompt">
+            <h1>Welcome to Tilly Calendar</h1>
+            <p>Your AI-powered calendar assistant</p>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="get-started-btn"
+            >
+              Get Started
+            </button>
+          </div>
+        </div>
+        <AuthModal 
+          isOpen={showAuthModal} 
+          onClose={() => setShowAuthModal(false)} 
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="app">
       <div className="app-layout">
         <div className="calendar-section">
           <div className="calendar-header">
-            <h1>Calendar</h1>
+            <div className="user-section">
+              {user ? (
+                <div className="user-menu">
+                  <button
+                    onClick={() => setShowUserProfile(!showUserProfile)}
+                    className="user-avatar-btn"
+                    title={`Signed in as ${user.email}`}
+                  >
+                    {user.user_metadata?.display_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || 'U'}
+                  </button>
+                  {showUserProfile && (
+                    <div className="user-profile-dropdown-container">
+                      <UserProfile onClose={() => setShowUserProfile(false)} />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="sign-in-btn"
+                >
+                  Sign In
+                </button>
+              )}
+            </div>
             <div className="calendar-controls">
               <button 
                 onClick={goToToday}
                 className="today-btn"
+                title="Go to today's date"
               >
                 Today
               </button>
@@ -1221,7 +1090,7 @@ const App = () => {
                   className="import-btn"
                   title="Import calendar"
                 >
-                  📥 Import
+                  Import
                 </button>
                 {showDropdown && (
                   <div className="import-dropdown-menu">
@@ -1237,13 +1106,6 @@ const App = () => {
                   </div>
                 )}
               </div>
-              <button
-                onClick={loadEvents}
-                disabled={isLoading}
-                className="refresh-btn"
-              >
-                {isLoading ? '⟳' : '↻'}
-              </button>
             </div>
           </div>
 
@@ -1570,7 +1432,7 @@ const App = () => {
                       <div style={{ 
                         fontSize: '18px', 
                         fontWeight: '700', 
-                        color: isToday ? '#3b82f6' : '#1f2937' 
+                        color: isToday ? '#87A96B' : '#1f2937' 
                       }}>
                         {date.getDate()}
                       </div>
@@ -1867,7 +1729,7 @@ const App = () => {
                                         fontWeight: '600',
                                         fontSize: '12px',
                                         padding: '2px 4px',
-                                        border: '1px solid #3b82f6',
+                                        border: '1px solid #4A7C2A',
                                         borderRadius: '2px',
                                         backgroundColor: 'white',
                                         color: '#1f2937',
@@ -1896,7 +1758,8 @@ const App = () => {
                                           overflow: 'hidden',
                                           textOverflow: 'ellipsis',
                                           whiteSpace: 'nowrap',
-                                          fontSize: '12px'
+                                          fontSize: '12px',
+                                          color: event.color === '#F4F1E8' ? '#1f2937' : 'white'
                                         }}
                                         onMouseEnter={(e) => {
                                           e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'
@@ -1911,7 +1774,7 @@ const App = () => {
                                         fontSize: '10px', 
                                         opacity: 0.9, 
                                         paddingLeft: '4px',
-                                        color: 'rgba(255, 255, 255, 0.9)'
+                                        color: event.color === '#F4F1E8' ? 'rgba(31, 41, 55, 0.7)' : 'rgba(255, 255, 255, 0.9)'
                                       }}>
                                         {eventStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         {duration >= 60 && ` - ${eventEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
@@ -1935,7 +1798,7 @@ const App = () => {
                                       style={{
                                         width: '16px',
                                         height: '16px',
-                                        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                                        backgroundColor: 'rgba(74, 124, 42, 0.8)',
                                         borderRadius: '50%',
                                         display: 'flex',
                                         alignItems: 'center',
@@ -1948,11 +1811,11 @@ const App = () => {
                                         pointerEvents: 'auto'
                                       }}
                                       onMouseEnter={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(59, 130, 246, 1)'
+                                        e.target.style.backgroundColor = 'rgba(74, 124, 42, 1)'
                                         e.target.style.opacity = '1'
                                       }}
                                       onMouseLeave={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.8)'
+                                        e.target.style.backgroundColor = 'rgba(74, 124, 42, 0.8)'
                                         e.target.style.opacity = '0'
                                       }}
                                     >
@@ -2080,7 +1943,7 @@ const App = () => {
                       wordWrap: 'break-word',
                       marginLeft: message.sender === 'user' ? 'auto' : '0',
                       marginRight: message.sender === 'user' ? '0' : 'auto',
-                      backgroundColor: message.sender === 'user' ? '#3b82f6' : '#f3f4f6',
+                      backgroundColor: message.sender === 'user' ? '#87A96B' : '#f3f4f6',
                       color: message.sender === 'user' ? 'white' : '#1f2937',
                       fontSize: '14px',
                       lineHeight: '1.4'
@@ -2089,195 +1952,7 @@ const App = () => {
                     {message.text}
                   </div>
                   
-                  {/* Event confirmation buttons */}
-                  {message.pendingEvent && (
-                    <div style={{ 
-                      marginTop: '8px', 
-                      padding: '12px', 
-                      backgroundColor: '#f0f9ff',
-                      border: '1px solid #e0f2fe',
-                      borderRadius: '8px',
-                      fontSize: '13px'
-                    }}>
-                      <div style={{ marginBottom: '8px', fontWeight: 500 }}>
-                        📅 {message.pendingEvent.title}
-                      </div>
-                      <div style={{ marginBottom: '8px', color: '#6b7280' }}>
-                        {new Date(message.pendingEvent.start).toLocaleDateString()} {new Date(message.pendingEvent.start).toLocaleTimeString()} - {new Date(message.pendingEvent.end).toLocaleTimeString()}
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          onClick={() => addEventToCalendar(message.pendingEvent)}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#10b981',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Add Event
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMessages(currentMessages => 
-                              currentMessages.map(msg => 
-                                msg.id === message.id 
-                                  ? { ...msg, pendingEvent: undefined }
-                                  : msg
-                              )
-                            )
-                          }}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#6b7280',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Multiple actions buttons */}
-                  {message.multipleActions && (
-                    <div style={{ 
-                      marginTop: '8px', 
-                      padding: '12px', 
-                      backgroundColor: '#f3e8ff',
-                      border: '1px solid #8b5cf6',
-                      borderRadius: '8px',
-                      fontSize: '13px'
-                    }}>
-                      <div style={{ marginBottom: '8px', fontWeight: 500 }}>
-                        🔄 Multiple Actions
-                      </div>
-                      {message.multipleActions.map((action, index) => (
-                        <div key={index} style={{ marginBottom: '6px', color: '#6b7280' }}>
-                          {action.type === 'event_rearrangement' && action.rearrangements && (
-                            <div>
-                              🔄 Move "{action.rearrangements[0].currentTitle}" to {new Date(action.rearrangements[0].newStart).toLocaleDateString()} {new Date(action.rearrangements[0].newStart).toLocaleTimeString()}
-                            </div>
-                          )}
-                          {action.type === 'event_suggestion' && action.eventData && (
-                            <div>
-                              ➕ Add "{action.eventData.title}" on {new Date(action.eventData.start).toLocaleDateString()} at {new Date(action.eventData.start).toLocaleTimeString()}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          onClick={() => handleMultipleActions(message.multipleActions)}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#8b5cf6',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Execute All Actions
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMessages(currentMessages => 
-                              currentMessages.map(msg => 
-                                msg.id === message.id 
-                                  ? { ...msg, multipleActions: undefined }
-                                  : msg
-                              )
-                            )
-                          }}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#6b7280',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Event rearrangement buttons */}
-                  {message.pendingRearrangements && (
-                    <div style={{ 
-                      marginTop: '8px', 
-                      padding: '12px', 
-                      backgroundColor: '#fef3c7',
-                      border: '1px solid #f59e0b',
-                      borderRadius: '8px',
-                      fontSize: '13px'
-                    }}>
-                      <div style={{ marginBottom: '8px', fontWeight: 500 }}>
-                        🔄 Event Rearrangement
-                      </div>
-                      {message.pendingRearrangements.map((rearrangement, index) => (
-                        <div key={index} style={{ marginBottom: '8px', color: '#6b7280' }}>
-                          Move "{rearrangement.currentTitle}" to {new Date(rearrangement.newStart).toLocaleDateString()} {new Date(rearrangement.newStart).toLocaleTimeString()} - {new Date(rearrangement.newEnd).toLocaleTimeString()}
-                        </div>
-                      ))}
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          onClick={() => rearrangeEvents(message.pendingRearrangements)}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#f59e0b',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Move Events
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMessages(currentMessages => 
-                              currentMessages.map(msg => 
-                                msg.id === message.id 
-                                  ? { ...msg, pendingRearrangements: undefined }
-                                  : msg
-                              )
-                            )
-                          }}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#6b7280',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            fontWeight: 500
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {/* Tool-based AI now handles actions automatically - no more pending action buttons needed */}
                 </div>
               ))}
               
@@ -2328,7 +2003,7 @@ const App = () => {
                   disabled={isProcessing || inputMessage.trim() === ''}
                   style={{
                     padding: '10px 16px',
-                    backgroundColor: isProcessing || inputMessage.trim() === '' ? '#9ca3af' : '#3b82f6',
+                    backgroundColor: isProcessing || inputMessage.trim() === '' ? '#9ca3af' : '#87A96B',
                     color: 'white',
                     border: 'none',
                     borderRadius: '8px',
@@ -2455,9 +2130,33 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* Authentication Modal */}
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
     </div>
   )
 }
 
-export default App
+// Loading component for authentication
+const AppWithAuth = () => {
+  const { loading: authLoading } = useAuth()
+
+  if (authLoading) {
+    return (
+      <div className="auth-loading">
+        <div className="auth-loading-content">
+          <div className="auth-loading-spinner"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return <App />
+}
+
+export default AppWithAuth
 

@@ -6,27 +6,124 @@ const multer = require('multer');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Import database functions
+// Import Supabase functions instead of SQLite
 const {
-  initDatabase,
   getAllEvents,
+  getEventById,
   createEvent,
   updateEvent,
   deleteEvent,
   getEventsByDateRange,
   getEventsForPeriod,
+  searchEvents,
   getCalendarStats,
-  closeDatabase,
   importEvents,
   addCalendarSubscription,
   getCalendarSubscriptions,
   updateCalendarSync,
   deleteCalendarSubscription,
   importEventsFromSubscription
-} = require('./database');
+} = require('./supabase.js');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Get detailed timezone information for the user
+function getUserTimezoneInfo() {
+  const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  
+  // Get the timezone offset in hours and minutes
+  const offsetMinutes = -now.getTimezoneOffset();
+  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60);
+  const offsetMinutesRemainder = Math.abs(offsetMinutes) % 60;
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-';
+  const offsetFormatted = `UTC${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutesRemainder).padStart(2, '0')}`;
+  
+  // Check if it's daylight saving time
+  const jan = new Date(now.getFullYear(), 0, 1);
+  const jul = new Date(now.getFullYear(), 6, 1);
+  const isDST = now.getTimezoneOffset() < Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+  
+  // Get current time in local format
+  const localTimeStr = now.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true,
+    timeZone 
+  });
+  
+  // Get timezone abbreviation (approximate)
+  let tzAbbr;
+  try {
+    tzAbbr = now.toLocaleTimeString('en-US', { timeZoneName: 'short' })
+      .split(' ').pop();
+  } catch (e) {
+    tzAbbr = isDST ? 'DST' : 'STD';
+  }
+  
+  return {
+    timeZone,
+    offsetFormatted,
+    offsetMinutes,
+    isDST,
+    localTimeStr,
+    tzAbbr,
+    utcTimeStr: now.toISOString()
+  };
+}
+
+// Convert local time to UTC
+function localToUTC(localTimeStr, dateStr = null) {
+  // If no date is provided, use today
+  const today = new Date();
+  const date = dateStr ? new Date(dateStr) : today;
+  
+  // Parse time components
+  let hours = 0;
+  let minutes = 0;
+  let isPM = false;
+  
+  // Handle different time formats
+  if (localTimeStr.toLowerCase().includes('am') || localTimeStr.toLowerCase().includes('pm')) {
+    // 12-hour format (e.g., "3:00 PM")
+    const timeParts = localTimeStr.match(/(\d+):(\d+)\s*(am|pm)/i);
+    if (timeParts) {
+      hours = parseInt(timeParts[1], 10);
+      minutes = parseInt(timeParts[2], 10);
+      isPM = timeParts[3].toLowerCase() === 'pm';
+      
+      // Convert 12-hour to 24-hour
+      if (isPM && hours < 12) hours += 12;
+      if (!isPM && hours === 12) hours = 0;
+    }
+  } else {
+    // 24-hour format (e.g., "15:00")
+    const timeParts = localTimeStr.match(/(\d+):(\d+)/);
+    if (timeParts) {
+      hours = parseInt(timeParts[1], 10);
+      minutes = parseInt(timeParts[2], 10);
+    }
+  }
+  
+  // Set the time components on the date
+  date.setHours(hours, minutes, 0, 0);
+  
+  // Return ISO string (UTC)
+  return date.toISOString();
+}
+
+// Convert UTC to local time string
+function utcToLocal(utcTimeStr, format = '12h') {
+  const date = new Date(utcTimeStr);
+  const options = { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: format === '12h'
+  };
+  
+  return date.toLocaleTimeString('en-US', options);
+}
 
 // Email transporter configuration
 const createEmailTransporter = () => {
@@ -95,11 +192,50 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 
-// Initialize database on server start
-initDatabase().catch(err => {
-  console.error('Failed to initialize database:', err);
-  process.exit(1);
-});
+// Authentication middleware
+const authenticateUser = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No authentication token provided' });
+    }
+    
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    
+    // Create authenticated Supabase client with user's token
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      }
+    );
+    
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    if (error || !user) {
+      return res.status(401).json({ error: 'Invalid authentication token' });
+    }
+    
+    // Add user info and authenticated Supabase client to request object
+    req.user = user;
+    req.userId = user.id;
+    req.supabase = supabase; // Authenticated client
+    
+    next();
+  } catch (error) {
+    console.error('Authentication error:', error);
+    return res.status(401).json({ error: 'Authentication failed' });
+  }
+};
+
+// Supabase doesn't need initialization - it's ready to use!
 
 // Anthropic API proxy endpoint
 app.post('/api/claude', async (req, res) => {
@@ -142,9 +278,9 @@ app.post('/api/claude', async (req, res) => {
 // Events API endpoints
 
 // GET /api/events - Get all events
-app.get('/api/events', async (req, res) => {
+app.get('/api/events', authenticateUser, async (req, res) => {
   try {
-    const events = await getAllEvents();
+    const events = await getAllEvents(req.userId, req.supabase);
     res.json(events);
   } catch (error) {
     console.error('Error fetching events:', error);
@@ -153,7 +289,7 @@ app.get('/api/events', async (req, res) => {
 });
 
 // GET /api/events/range - Get events within a date range
-app.get('/api/events/range', async (req, res) => {
+app.get('/api/events/range', authenticateUser, async (req, res) => {
   try {
     const { start, end } = req.query;
     
@@ -177,7 +313,7 @@ app.get('/api/events/range', async (req, res) => {
 });
 
 // POST /api/events - Create a new event
-app.post('/api/events', async (req, res) => {
+app.post('/api/events', authenticateUser, async (req, res) => {
   try {
     const { title, start, end, color } = req.body;
     
@@ -200,8 +336,8 @@ app.post('/api/events', async (req, res) => {
       title,
       start: startDate,
       end: endDate,
-      color: color || '#3b82f6'
-    });
+      color: color || '#4A7C2A'
+    }, req.userId, req.supabase);
     
     console.log('Created new event:', newEvent);
     res.status(201).json(newEvent);
@@ -212,13 +348,15 @@ app.post('/api/events', async (req, res) => {
 });
 
 // PUT /api/events/:id - Update an existing event
-app.put('/api/events/:id', async (req, res) => {
+app.put('/api/events/:id', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, start, end, color } = req.body;
+    const userId = req.userId;
+    const authenticatedSupabase = req.supabase;
     
     // Get the existing event first
-    const existingEvents = await getAllEvents();
+    const existingEvents = await getAllEvents(userId, authenticatedSupabase);
     const existingEvent = existingEvents.find(e => e.id === parseInt(id));
     
     if (!existingEvent) {
@@ -246,7 +384,7 @@ app.put('/api/events/:id', async (req, res) => {
       return res.status(400).json({ error: 'Start time must be before end time' });
     }
     
-    const updatedEvent = await updateEvent(parseInt(id), updateData);
+    const updatedEvent = await updateEvent(parseInt(id), updateData, userId, authenticatedSupabase);
     
     console.log('Updated event:', updatedEvent);
     res.json(updatedEvent);
@@ -257,14 +395,12 @@ app.put('/api/events/:id', async (req, res) => {
 });
 
 // DELETE /api/events/:id - Delete an event
-app.delete('/api/events/:id', async (req, res) => {
+app.delete('/api/events/:id', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await deleteEvent(parseInt(id));
-    
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
+    const userId = req.userId;
+    const authenticatedSupabase = req.supabase;
+    const result = await deleteEvent(parseInt(id), userId, authenticatedSupabase);
     
     console.log('Deleted event:', result);
     res.json({ message: 'Event deleted successfully', id: parseInt(id) });
@@ -274,7 +410,1149 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// AI TOOL ENDPOINTS - Clean tool-based API for Claude assistant
+// ============================================================================
 
+// Tool: get_calendar_events - Get events for conflict checking and context
+app.post('/api/tools/get_calendar_events', authenticateUser, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.body;
+    
+    let events;
+    if (start_date && end_date) {
+      // Get events within specific date range
+      events = await getEventsByDateRange(
+        new Date(start_date), 
+        new Date(end_date), 
+        req.userId, 
+        req.supabase
+      );
+    } else {
+      // Get all events if no range specified
+      events = await getAllEvents(req.userId, req.supabase);
+    }
+    
+    // Format for AI consumption
+    const formattedEvents = events.map(event => ({
+      id: event.id,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      color: event.color
+    }));
+    
+    res.json({
+      success: true,
+      events: formattedEvents,
+      count: formattedEvents.length
+    });
+  } catch (error) {
+    console.error('Error getting calendar events:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get calendar events',
+      details: error.message 
+    });
+  }
+});
+
+// Tool: create_event - Create a new event
+app.post('/api/tools/create_event', authenticateUser, async (req, res) => {
+  try {
+    const { title, start_time, end_time, description } = req.body;
+    
+    if (!title || !start_time || !end_time) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Title, start_time, and end_time are required' 
+      });
+    }
+    
+    const startDate = new Date(start_time);
+    const endDate = new Date(end_time);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid date format' 
+      });
+    }
+    
+    if (startDate >= endDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Start time must be before end time' 
+      });
+    }
+    
+    const newEvent = await createEvent({
+      title,
+      start: startDate,
+      end: endDate,
+      color: '#F4F1E8', // AI events use cream color
+      description
+    }, req.userId, req.supabase);
+    
+    console.log('🤖 AI created event:', newEvent);
+    res.json({
+      success: true,
+      event: newEvent,
+      message: `Created event "${title}" from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`
+    });
+  } catch (error) {
+    console.error('Error creating event via AI tool:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to create event',
+      details: error.message 
+    });
+  }
+});
+
+// Tool: move_event - Move/reschedule an existing event
+app.post('/api/tools/move_event', authenticateUser, async (req, res) => {
+  try {
+    const { event_id, new_start_time, new_end_time } = req.body;
+    
+    if (!event_id || !new_start_time || !new_end_time) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'event_id, new_start_time, and new_end_time are required' 
+      });
+    }
+    
+    const newStartDate = new Date(new_start_time);
+    const newEndDate = new Date(new_end_time);
+    
+    if (isNaN(newStartDate.getTime()) || isNaN(newEndDate.getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid date format' 
+      });
+    }
+    
+    if (newStartDate >= newEndDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'New start time must be before new end time' 
+      });
+    }
+    
+    // Check if event exists and user has access
+    const allEvents = await getAllEvents(req.userId, req.supabase);
+    const existingEvent = allEvents.find(e => e.id === parseInt(event_id));
+    
+    if (!existingEvent) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Event not found' 
+      });
+    }
+    
+    const updatedEvent = await updateEvent(parseInt(event_id), {
+      start: newStartDate,
+      end: newEndDate
+    }, req.userId, req.supabase);
+    
+    console.log('🤖 AI moved event:', updatedEvent);
+    res.json({
+      success: true,
+      event: updatedEvent,
+      message: `Moved "${updatedEvent.title}" to ${newStartDate.toLocaleString()} - ${newEndDate.toLocaleString()}`
+    });
+  } catch (error) {
+    console.error('Error moving event via AI tool:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to move event',
+      details: error.message 
+    });
+  }
+});
+
+// Tool: check_time_conflicts - Check for conflicts with a proposed time
+app.post('/api/tools/check_time_conflicts', authenticateUser, async (req, res) => {
+  try {
+    const { start_time, end_time, exclude_event_id } = req.body;
+    
+    if (!start_time || !end_time) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'start_time and end_time are required' 
+      });
+    }
+    
+    const startDate = new Date(start_time);
+    const endDate = new Date(end_time);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid date format' 
+      });
+    }
+    
+    // Get all events to check conflicts
+    const allEvents = await getAllEvents(req.userId, req.supabase);
+    
+    // Filter out the excluded event if provided (for rescheduling scenarios)
+    const eventsToCheck = exclude_event_id 
+      ? allEvents.filter(e => e.id !== parseInt(exclude_event_id))
+      : allEvents;
+    
+    const conflicts = checkEventConflicts(startDate, endDate, eventsToCheck);
+    
+    res.json({
+      success: true,
+      has_conflicts: conflicts.length > 0,
+      conflicts: conflicts.map(event => ({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end
+      })),
+      conflict_count: conflicts.length
+    });
+  } catch (error) {
+    console.error('Error checking time conflicts:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to check conflicts',
+      details: error.message 
+    });
+  }
+});
+
+// NEW: Tool-based Claude AI endpoint
+app.post('/api/ai/chat', authenticateUser, async (req, res) => {
+  try {
+    const { message, chatHistory = [] } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // Define tools for Claude
+    const tools = [
+      {
+        name: "get_calendar_events",
+        description: "Get calendar events for a specific date range or all events if no range provided. Use this to check existing events before scheduling.",
+        input_schema: {
+          type: "object",
+          properties: {
+            start_date: {
+              type: "string",
+              description: "Start date in ISO format (YYYY-MM-DD) - optional"
+            },
+            end_date: {
+              type: "string", 
+              description: "End date in ISO format (YYYY-MM-DD) - optional"
+            }
+          }
+        }
+      },
+      {
+        name: "create_event",
+        description: "Create a new calendar event. Always check for conflicts first using get_calendar_events.",
+        input_schema: {
+          type: "object",
+          properties: {
+            title: {
+              type: "string",
+              description: "Event title"
+            },
+            start_time: {
+              type: "string",
+              description: "Start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            end_time: {
+              type: "string",
+              description: "End time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            description: {
+              type: "string",
+              description: "Optional event description"
+            }
+          },
+          required: ["title", "start_time", "end_time"]
+        }
+      },
+      {
+        name: "move_event",
+        description: "Move/reschedule an existing event to a new time and optionally change its title. Use check_time_conflicts first to ensure no conflicts.",
+        input_schema: {
+          type: "object",
+          properties: {
+            event_id: {
+              type: "integer",
+              description: "ID of the event to move"
+            },
+            new_start_time: {
+              type: "string",
+              description: "New start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            new_end_time: {
+              type: "string",
+              description: "New end time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            new_title: {
+              type: "string",
+              description: "Optional: New title for the event. Use this when renaming and moving in one operation."
+            }
+          },
+          required: ["event_id", "new_start_time", "new_end_time"]
+        }
+      },
+      {
+        name: "check_time_conflicts",
+        description: "Check if a proposed time slot conflicts with existing events.",
+        input_schema: {
+          type: "object",
+          properties: {
+            start_time: {
+              type: "string",
+              description: "Proposed start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            end_time: {
+              type: "string",
+              description: "Proposed end time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+            },
+            exclude_event_id: {
+              type: "integer",
+              description: "Optional: Event ID to exclude from conflict check (for rescheduling)"
+            }
+          },
+          required: ["start_time", "end_time"]
+        }
+      },
+      {
+        name: "search_events",
+        description: "Search for events by title (case-insensitive partial match).",
+        input_schema: {
+          type: "object",
+          properties: {
+            search_term: {
+              type: "string",
+              description: "Text to search for in event titles"
+            },
+            start_date: {
+              type: "string",
+              description: "Optional: Filter events starting after this date (YYYY-MM-DD)"
+            },
+            end_date: {
+              type: "string",
+              description: "Optional: Filter events starting before this date (YYYY-MM-DD)"
+            }
+          },
+          required: ["search_term"]
+        }
+      }
+    ];
+
+    // Get today and tomorrow's events for context
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    
+    const todayStr = today.toISOString().split('T')[0];
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    
+    // Get events for today and tomorrow
+    const todayEvents = await getEventsByDateRange(
+      new Date(todayStr + 'T00:00:00Z'),
+      new Date(todayStr + 'T23:59:59Z'),
+      req.userId,
+      req.supabase
+    );
+    
+    const tomorrowEvents = await getEventsByDateRange(
+      new Date(tomorrowStr + 'T00:00:00Z'),
+      new Date(tomorrowStr + 'T23:59:59Z'),
+      req.userId,
+      req.supabase
+    );
+    
+    // Format events for the prompt
+    const formatEventsForPrompt = (events, day) => {
+      if (events.length === 0) return `${day}: No events scheduled`;
+      return `${day}: ${events.map(e => `"${e.title}" (${utcToLocal(e.start)} - ${utcToLocal(e.end)})`).join(', ')}`;
+    };
+
+    // Create system prompt with detailed timezone information
+    const tzInfo = getUserTimezoneInfo();
+    const systemPrompt = `You are Tilly, a helpful calendar assistant. 
+
+CURRENT CONTEXT:
+- Current UTC time: ${new Date().toISOString()}
+- Current local time: ${tzInfo.localTimeStr}
+- Current date: ${new Date().toLocaleDateString()}
+- Current day: ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}
+- User timezone: ${tzInfo.timeZone} (${tzInfo.offsetFormatted}, ${tzInfo.tzAbbr})
+- Daylight Saving Time active: ${tzInfo.isDST ? 'Yes' : 'No'}
+
+UPCOMING EVENTS:
+- ${formatEventsForPrompt(todayEvents, 'Today')}
+- ${formatEventsForPrompt(tomorrowEvents, 'Tomorrow')}
+
+IMPORTANT TIME HANDLING:
+- When DISPLAYING times to the user, ALWAYS convert from UTC to ${tzInfo.timeZone} (${tzInfo.offsetFormatted})
+- When CALLING TOOLS, always use UTC/ISO format (YYYY-MM-DDTHH:MM:SS)
+- When the user mentions times like "3pm", interpret that as ${tzInfo.timeZone} time and convert to UTC for tools
+- Display times naturally without explicitly mentioning the timezone unless there's ambiguity or the user asks
+- The system automatically handles timezone conversion, so you can speak naturally about times
+
+TIME CONVERSION EXAMPLES:
+- Local 9:00 AM ${tzInfo.tzAbbr} = ${localToUTC("9:00 AM")} in UTC
+- Local 3:00 PM ${tzInfo.tzAbbr} = ${localToUTC("3:00 PM")} in UTC
+- Local 8:30 PM ${tzInfo.tzAbbr} = ${localToUTC("8:30 PM")} in UTC
+- UTC ${new Date().toISOString()} = ${utcToLocal(new Date().toISOString())} ${tzInfo.tzAbbr}
+
+GUIDELINES:
+1. You automatically have context of today and tomorrow's events (shown above) - use this for quick reference
+2. For events on other days, use the get_calendar_events tool to retrieve them
+3. Always check existing events before scheduling to avoid conflicts
+4. When creating events, use ISO format times (YYYY-MM-DDTHH:MM:SS)
+5. Suggest alternative times if conflicts exist
+6. Be conversational and helpful
+7. If moving events to resolve conflicts, explain the changes clearly
+8. Use tools in the right order: check conflicts → create/move events
+9. Events you create will automatically appear in cream color to distinguish them from user-created events
+10. When renaming and moving an event, use the move_event tool with new_title parameter rather than creating new events and deleting old ones
+11. You can search for events by title using the search_events tool with a search term
+
+CONFLICT RESOLUTION STRATEGY:
+- Check for conflicts first with check_time_conflicts
+- If conflicts exist, either suggest alternative times or offer to move existing events
+- Prefer suggesting buffer time (15-30 min) between events
+- Ask user permission before moving existing events`;
+
+    // Build message history for Claude
+    const messages = [];
+    
+    // Add chat history
+    chatHistory.forEach(msg => {
+      messages.push({
+        role: msg.sender === 'user' ? 'user' : 'assistant',
+        content: msg.text
+      });
+    });
+    
+    // Add current message
+    messages.push({
+      role: 'user',
+      content: message
+    });
+
+    const claudeRequest = {
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: messages,
+      tools: tools
+    };
+
+    console.log('🤖 Making Claude API request with tools...');
+    
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(claudeRequest)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Claude API error:', errorText);
+      throw new Error(`Claude API request failed: ${response.status}`);
+    }
+
+    const claudeData = await response.json();
+    
+    // Check if Claude wants to use tools
+    const hasToolUse = claudeData.content.some(content => content.type === 'tool_use');
+    
+    if (hasToolUse) {
+      console.log('🔧 Claude wants to use tools, executing and getting final response...');
+      
+      // Execute all tool calls
+      const toolResults = [];
+      for (const content of claudeData.content) {
+        if (content.type === 'tool_use') {
+          console.log(`🔧 Executing tool: ${content.name}`, content.input);
+          
+          try {
+            let toolResult;
+            
+            switch (content.name) {
+              case 'get_calendar_events':
+                toolResult = await executeGetCalendarEvents(content.input, req);
+                break;
+              case 'create_event':
+                toolResult = await executeCreateEvent(content.input, req);
+                break;
+              case 'move_event':
+                toolResult = await executeMoveEvent(content.input, req);
+                break;
+              case 'check_time_conflicts':
+                toolResult = await executeCheckTimeConflicts(content.input, req);
+                break;
+              case 'search_events':
+                toolResult = await executeSearchEvents(content.input, req);
+                break;
+              default:
+                toolResult = { success: false, error: 'Unknown tool' };
+            }
+            
+                      console.log(`✅ Tool ${content.name} completed:`, toolResult.success ? 'SUCCESS' : 'FAILED');
+          
+          // Track tool name for change detection BEFORE stringifying
+          toolResult._tool_name = content.name;
+          
+          toolResults.push({
+            tool_use_id: content.id,
+            type: 'tool_result',
+            content: JSON.stringify(toolResult)
+          });
+            
+  } catch (error) {
+            console.error(`❌ Error executing tool ${content.name}:`, error);
+            toolResults.push({
+              tool_use_id: content.id,
+              type: 'tool_result',
+              content: JSON.stringify({ success: false, error: error.message })
+            });
+          }
+        }
+      }
+      
+      // Continue conversation with tool results, allowing for multiple rounds
+      const conversationMessages = [
+        ...messages,
+        {
+          role: 'assistant',
+          content: claudeData.content
+        },
+        {
+          role: 'user',
+          content: toolResults
+        }
+      ];
+      
+      let allToolResults = [...toolResults];
+      let finalResponse;
+      let maxRounds = 5; // Prevent infinite loops
+      let round = 1;
+      
+      while (round <= maxRounds) {
+        console.log(`🔄 Round ${round}: Sending tool results back to Claude...`);
+        
+        const followUpRequest = {
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: conversationMessages,
+          tools: tools
+        };
+        
+        const followUpResponse = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify(followUpRequest)
+        });
+        
+        if (!followUpResponse.ok) {
+          const errorText = await followUpResponse.text();
+          console.error(`Claude API error ${followUpResponse.status}:`, errorText);
+          throw new Error(`Claude follow-up request failed: ${followUpResponse.status}`);
+        }
+        
+        finalResponse = await followUpResponse.json();
+        
+        // Check if Claude wants to use more tools
+        const hasMoreToolUse = finalResponse.content.some(content => content.type === 'tool_use');
+        
+        if (!hasMoreToolUse) {
+          console.log(`🎉 Round ${round}: Claude finished with final response`);
+          break;
+        }
+        
+        console.log(`🔧 Round ${round}: Claude wants to use more tools...`);
+        
+        // Execute the additional tools
+        const moreToolResults = [];
+        for (const content of finalResponse.content) {
+          if (content.type === 'tool_use') {
+            console.log(`🔧 Round ${round}: Executing tool: ${content.name}`, content.input);
+            
+            try {
+              let toolResult;
+              
+              switch (content.name) {
+                case 'get_calendar_events':
+                  toolResult = await executeGetCalendarEvents(content.input, req);
+                  break;
+                case 'create_event':
+                  toolResult = await executeCreateEvent(content.input, req);
+                  break;
+                case 'move_event':
+                  toolResult = await executeMoveEvent(content.input, req);
+                  break;
+                case 'check_time_conflicts':
+                  toolResult = await executeCheckTimeConflicts(content.input, req);
+                  break;
+                case 'search_events':
+                  toolResult = await executeSearchEvents(content.input, req);
+                  break;
+                default:
+                  toolResult = { success: false, error: 'Unknown tool' };
+              }
+              
+              console.log(`✅ Round ${round}: Tool ${content.name} completed:`, toolResult.success ? 'SUCCESS' : 'FAILED');
+              
+              // Track tool name for change detection BEFORE stringifying
+              toolResult._tool_name = content.name;
+              
+              moreToolResults.push({
+                tool_use_id: content.id,
+                type: 'tool_result',
+                content: JSON.stringify(toolResult)
+              });
+              
+  } catch (error) {
+              console.error(`❌ Round ${round}: Error executing tool ${content.name}:`, error);
+              moreToolResults.push({
+                tool_use_id: content.id,
+                type: 'tool_result',
+                content: JSON.stringify({ success: false, error: error.message })
+              });
+            }
+          }
+        }
+        
+        // Add this round to the conversation
+        conversationMessages.push({
+          role: 'assistant',
+          content: finalResponse.content
+        });
+        conversationMessages.push({
+          role: 'user',
+          content: moreToolResults
+        });
+        
+        allToolResults.push(...moreToolResults);
+        round++;
+      }
+      
+      const finalText = finalResponse.content.map(c => c.text).join('');
+      
+              // Check if any events were created/moved across all rounds
+        console.log('🔍 Checking for event changes in', allToolResults.length, 'tool results');
+        const hasEventChanges = allToolResults.some(result => {
+          const content = JSON.parse(result.content);
+          console.log('🔍 Tool result:', content._tool_name, 'success:', content.success);
+          return content.success && ['create_event', 'move_event'].includes(content._tool_name);
+        });
+        
+        console.log('🔍 hasEventChanges:', hasEventChanges);
+        if (hasEventChanges) {
+          console.log('📅 Event changes detected - frontend will refresh calendar');
+        }
+      
+      res.json({
+        response: finalText,
+        toolResults: allToolResults.map(r => ({ ...r, content: JSON.parse(r.content) })),
+        hasEventChanges,
+        totalRounds: round - 1,
+        success: true
+      });
+      
+    } else {
+      // No tools needed, just return Claude's text response
+      const responseText = claudeData.content.map(c => c.text).join('');
+      res.json({
+        response: responseText,
+        toolResults: [],
+        hasEventChanges: false,
+        success: true
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in AI chat:', error);
+    res.status(500).json({ 
+      error: 'Failed to process AI request',
+      details: error.message 
+    });
+  }
+});
+
+// Tool execution functions - call directly instead of HTTP requests to avoid loops
+async function executeGetCalendarEvents(input, req) {
+  try {
+    const { start_date, end_date } = input;
+    
+    console.log('🔍 executeGetCalendarEvents called with:', {
+      input,
+      userId: req.userId,
+      hasSupabase: !!req.supabase
+    });
+    
+        let events;
+    if (start_date && end_date) {
+      console.log('🔍 Getting events by date range:', start_date, 'to', end_date);
+      
+      const startDateObj = new Date(start_date);
+      let endDateObj = new Date(end_date);
+      
+      // If start and end are the same day, extend end to midnight of next day
+      if (start_date === end_date) {
+        endDateObj = new Date(startDateObj);
+        endDateObj.setDate(endDateObj.getDate() + 1);
+        console.log('🔍 Same day detected, extending end date to next day');
+      }
+      
+      console.log('🔍 Date objects:', startDateObj, 'to', endDateObj);
+      
+      // Try to get ALL events first to see if there are any in the database
+      const allEventsTest = await getAllEvents(req.userId, req.supabase);
+      console.log('🔍 Total events for user:', allEventsTest.length);
+      
+      events = await getEventsByDateRange(
+        startDateObj, 
+        endDateObj, 
+        req.userId, 
+        req.supabase
+      );
+    } else {
+      console.log('🔍 Getting current week events (default)');
+      // Get current week - Monday to Sunday
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      const day = startOfWeek.getDay();
+      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Monday start
+      startOfWeek.setDate(diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+      
+      console.log('🔍 Week range:', startOfWeek.toISOString(), 'to', endOfWeek.toISOString());
+      
+      events = await getEventsByDateRange(
+        startOfWeek,
+        endOfWeek,
+        req.userId,
+        req.supabase
+      );
+      console.log('🔍 Current week events returned:', events.length, 'events');
+    }
+    
+    console.log('🔍 Raw events returned:', events.length, 'events');
+    if (events.length > 0) {
+      console.log('🔍 First event:', events[0]);
+    }
+    
+    const formattedEvents = events.map(event => ({
+      id: event.id,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      color: event.color
+    }));
+    
+    // Limit events sent to Claude to prevent API issues
+    const maxEventsForAI = 50;
+    const eventsForAI = formattedEvents.slice(0, maxEventsForAI);
+    const wasLimited = formattedEvents.length > maxEventsForAI;
+    
+    console.log('🔍 Returning formatted events:', eventsForAI.length, wasLimited ? `(limited from ${formattedEvents.length})` : '');
+    
+    return {
+      success: true,
+      events: eventsForAI,
+      count: eventsForAI.length,
+      total_count: formattedEvents.length,
+      ...(wasLimited && { note: `Showing first ${maxEventsForAI} of ${formattedEvents.length} events` })
+    };
+  } catch (error) {
+    console.error('❌ Error in executeGetCalendarEvents:', error);
+    return { 
+      success: false, 
+      error: 'Failed to get calendar events',
+      details: error.message 
+    };
+  }
+}
+
+async function executeCreateEvent(input, req) {
+  try {
+    const { title, start_time, end_time, description } = input;
+    
+    if (!title || !start_time || !end_time) {
+      return { 
+        success: false,
+        error: 'Title, start_time, and end_time are required' 
+      };
+    }
+    
+    // Handle timezone properly - convert local time inputs to UTC
+    // If input already has timezone info, use it directly
+    // Otherwise, treat as local time and convert to UTC
+    const tzInfo = getUserTimezoneInfo();
+    
+    let startDate, endDate;
+    if (start_time.includes('Z') || start_time.includes('+') || start_time.includes('-')) {
+      // Already has timezone info, use directly
+      startDate = new Date(start_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localStartDate = new Date(start_time);
+      startDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    
+    if (end_time.includes('Z') || end_time.includes('+') || end_time.includes('-')) {
+      // Already has timezone info, use directly
+      endDate = new Date(end_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localEndDate = new Date(end_time);
+      endDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    console.log('🔍 Input times:', start_time, 'to', end_time);
+    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
+    console.log('🔍 Parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
+    console.log('🔍 Local times:', utcToLocal(startDate.toISOString()), 'to', utcToLocal(endDate.toISOString()));
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return { 
+        success: false,
+        error: 'Invalid date format' 
+      };
+    }
+    
+    if (startDate >= endDate) {
+      return { 
+        success: false,
+        error: 'Start time must be before end time' 
+      };
+    }
+    
+    const newEvent = await createEvent({
+      title,
+      start: startDate,
+      end: endDate,
+      color: '#F4F1E8', // AI events use cream color
+      description
+    }, req.userId, req.supabase);
+    
+    console.log('🤖 AI created event:', newEvent);
+    return {
+      success: true,
+      event: newEvent,
+      message: `Created event "${title}" from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`
+    };
+  } catch (error) {
+    console.error('Error in executeCreateEvent:', error);
+    return { 
+      success: false,
+      error: 'Failed to create event',
+      details: error.message 
+    };
+  }
+}
+
+async function executeMoveEvent(input, req) {
+  try {
+    const { event_id, new_start_time, new_end_time, new_title } = input;
+    
+    if (!event_id || !new_start_time || !new_end_time) {
+      return { 
+        success: false,
+        error: 'event_id, new_start_time, and new_end_time are required' 
+      };
+    }
+    
+    // Handle timezone properly - convert local time inputs to UTC
+    // If input already has timezone info, use it directly
+    // Otherwise, treat as local time and convert to UTC
+    const tzInfo = getUserTimezoneInfo();
+    
+    let newStartDate, newEndDate;
+    if (new_start_time.includes('Z') || new_start_time.includes('+') || new_start_time.includes('-')) {
+      // Already has timezone info, use directly
+      newStartDate = new Date(new_start_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localStartDate = new Date(new_start_time);
+      newStartDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    
+    if (new_end_time.includes('Z') || new_end_time.includes('+') || new_end_time.includes('-')) {
+      // Already has timezone info, use directly
+      newEndDate = new Date(new_end_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localEndDate = new Date(new_end_time);
+      newEndDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    console.log('🔍 Move input times:', new_start_time, 'to', new_end_time);
+    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
+    console.log('🔍 Move parsed dates (UTC):', newStartDate.toISOString(), 'to', newEndDate.toISOString());
+    console.log('🔍 Local times:', utcToLocal(newStartDate.toISOString()), 'to', utcToLocal(newEndDate.toISOString()));
+    
+    if (isNaN(newStartDate.getTime()) || isNaN(newEndDate.getTime())) {
+      return { 
+        success: false,
+        error: 'Invalid date format' 
+      };
+    }
+    
+    if (newStartDate >= newEndDate) {
+      return { 
+        success: false,
+        error: 'New start time must be before new end time' 
+      };
+    }
+    
+    // Check if event exists and user has access - using direct lookup
+    const existingEvent = await getEventById(parseInt(event_id), req.userId, req.supabase);
+    
+    if (!existingEvent) {
+      return { 
+        success: false,
+        error: 'Event not found' 
+      };
+    }
+    
+    const updatedEvent = await updateEvent(parseInt(event_id), {
+      start: newStartDate,
+      end: newEndDate
+    }, req.userId, req.supabase);
+    
+    console.log('🤖 AI moved event:', updatedEvent);
+    return {
+      success: true,
+      event: updatedEvent,
+      message: `Moved "${updatedEvent.title}" to ${newStartDate.toLocaleString()} - ${newEndDate.toLocaleString()}`
+    };
+  } catch (error) {
+    console.error('Error in executeMoveEvent:', error);
+    return { 
+      success: false,
+      error: 'Failed to move event',
+      details: error.message 
+    };
+  }
+}
+
+async function executeCheckTimeConflicts(input, req) {
+  try {
+    const { start_time, end_time, exclude_event_id } = input;
+    
+    if (!start_time || !end_time) {
+      return { 
+        success: false,
+        error: 'start_time and end_time are required' 
+      };
+    }
+    
+    // Handle timezone properly - convert local time inputs to UTC
+    // If input already has timezone info, use it directly
+    // Otherwise, treat as local time and convert to UTC
+    const tzInfo = getUserTimezoneInfo();
+    
+    let startDate, endDate;
+    if (start_time.includes('Z') || start_time.includes('+') || start_time.includes('-')) {
+      // Already has timezone info, use directly
+      startDate = new Date(start_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localStartDate = new Date(start_time);
+      startDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    
+    if (end_time.includes('Z') || end_time.includes('+') || end_time.includes('-')) {
+      // Already has timezone info, use directly
+      endDate = new Date(end_time);
+    } else {
+      // No timezone info, treat as local time and convert to UTC
+      // Parse as local time then adjust for timezone offset
+      const localEndDate = new Date(end_time);
+      endDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    }
+    console.log('🔍 Conflict check input times:', start_time, 'to', end_time);
+    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
+    console.log('🔍 Parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
+    console.log('🔍 Local times:', utcToLocal(startDate.toISOString()), 'to', utcToLocal(endDate.toISOString()));
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return { 
+        success: false,
+        error: 'Invalid date format' 
+      };
+    }
+    
+    // Get only events that might conflict (in the same timeframe)
+    // This is more efficient than loading ALL events
+    const eventsInTimeframe = await getEventsByDateRange(
+      new Date(new Date(startDate).getTime() - 24 * 60 * 60 * 1000), // 1 day before
+      new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000),   // 1 day after
+      req.userId,
+      req.supabase
+    );
+    
+    // Filter out the excluded event if provided (for rescheduling scenarios)
+    const eventsToCheck = exclude_event_id 
+      ? eventsInTimeframe.filter(e => e.id !== parseInt(exclude_event_id))
+      : eventsInTimeframe;
+    
+    const conflicts = checkEventConflicts(startDate, endDate, eventsToCheck);
+    
+    return {
+      success: true,
+      has_conflicts: conflicts.length > 0,
+      conflicts: conflicts.map(event => ({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end
+      })),
+      conflict_count: conflicts.length
+    };
+  } catch (error) {
+    console.error('Error in executeCheckTimeConflicts:', error);
+    return { 
+      success: false,
+      error: 'Failed to check conflicts',
+      details: error.message 
+    };
+  }
+}
+
+async function executeSearchEvents(input, req) {
+  try {
+    const { search_term, start_date, end_date } = input;
+    
+    if (!search_term) {
+      return { 
+        success: false,
+        error: 'search_term is required' 
+      };
+    }
+    
+    console.log(`🔍 Searching events with term: "${search_term}"`);
+    
+    // Set up the timeframe filter if dates are provided
+    let timeframe = null;
+    
+    if (start_date || end_date) {
+      timeframe = {};
+      const tzInfo = getUserTimezoneInfo();
+      console.log('🔍 User timezone for search:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
+      
+      if (start_date) {
+        // Handle timezone properly for start date
+        const startDate = start_date.includes('Z') || start_date.includes('+') || start_date.includes('-') 
+          ? new Date(start_date) 
+          : new Date(start_date + 'T00:00:00Z'); // Assume start of day in UTC if just a date
+        
+        if (isNaN(startDate.getTime())) {
+          return {
+            success: false,
+            error: 'Invalid start_date format. Use YYYY-MM-DD.'
+          };
+        }
+        console.log('🔍 Search start date (UTC):', startDate.toISOString());
+        console.log('🔍 Search start date (local):', utcToLocal(startDate.toISOString()));
+        timeframe.start = startDate;
+      } else {
+        // If no start date, use a date far in the past
+        timeframe.start = new Date(0); // Jan 1, 1970
+      }
+      
+      if (end_date) {
+        // Handle timezone properly for end date
+        let endDate;
+        if (end_date.includes('Z') || end_date.includes('+') || end_date.includes('-')) {
+          // If it has timezone info, use it directly
+          endDate = new Date(end_date);
+        } else if (end_date.length === 10) { // YYYY-MM-DD format
+          // If just a date is provided without time, set to end of day in UTC
+          endDate = new Date(end_date + 'T23:59:59Z');
+        } else {
+          // Otherwise assume it's UTC time
+          endDate = new Date(end_date + 'Z');
+        }
+        
+        if (isNaN(endDate.getTime())) {
+          return {
+            success: false,
+            error: 'Invalid end_date format. Use YYYY-MM-DD.'
+          };
+        }
+        
+        console.log('🔍 Search end date (UTC):', endDate.toISOString());
+        console.log('🔍 Search end date (local):', utcToLocal(endDate.toISOString()));
+        timeframe.end = endDate;
+      } else {
+        // If no end date, use a date far in the future
+        timeframe.end = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000); // ~10 years from now
+      }
+      
+      console.log(`🔍 Filtering by timeframe: ${timeframe.start.toISOString()} to ${timeframe.end.toISOString()}`);
+    }
+    
+    // Perform the search
+    const events = await searchEvents(search_term, timeframe, req.userId, req.supabase);
+    
+    console.log(`🔍 Found ${events.length} events matching "${search_term}"`);
+    
+    // Limit events sent to Claude to prevent API issues
+    const maxEventsForAI = 50;
+    const eventsForAI = events.slice(0, maxEventsForAI);
+    const wasLimited = events.length > maxEventsForAI;
+    
+    return {
+      success: true,
+      events: eventsForAI.map(event => ({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end,
+        color: event.color
+      })),
+      count: eventsForAI.length,
+      total_count: events.length,
+      search_term: search_term,
+      ...(wasLimited && { note: `Showing first ${maxEventsForAI} of ${events.length} events` })
+    };
+  } catch (error) {
+    console.error('Error in executeSearchEvents:', error);
+    return { 
+      success: false,
+      error: 'Failed to search events',
+      details: error.message 
+    };
+  }
+}
+
+// ============================================================================
+// LEGACY ENDPOINTS (keep for backwards compatibility)
+// ============================================================================
 
 // POST /api/events/import - Import events from iCal file
 app.post('/api/events/import', upload.single('icalFile'), async (req, res) => {
@@ -375,7 +1653,7 @@ app.post('/api/events/import', upload.single('icalFile'), async (req, res) => {
 });
 
 // POST /api/events/import-url - Import events from iCloud shared calendar URL
-app.post('/api/events/import-url', upload.none(), async (req, res) => {
+app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, res) => {
   try {
     const { url, subscribe, name } = req.body;
     
@@ -405,7 +1683,7 @@ app.post('/api/events/import-url', upload.none(), async (req, res) => {
           title: event.summary || 'Untitled Event',
           start: new Date(event.start),
           end: new Date(event.end),
-          color: '#3b82f6', // Default blue for URL imports
+          color: '#4A7C2A', // Default lighter green for URL imports
           uid: event.uid
         };
       });
@@ -419,12 +1697,12 @@ app.post('/api/events/import-url', upload.none(), async (req, res) => {
         const subscription = await addCalendarSubscription({ 
           name: name.trim(), 
           url, 
-          color: '#3b82f6' 
-        });
+          color: '#4A7C2A' 
+        }, req.userId, req.supabase);
         subscriptionId = subscription.id;
         
-        result = await importEventsFromSubscription(subscriptionId, eventsData);
-        await updateCalendarSync(subscriptionId);
+        result = await importEventsFromSubscription(subscriptionId, eventsData, req.userId, req.supabase);
+        await updateCalendarSync(subscriptionId, new Date(), req.userId, req.supabase);
         
         console.log(`📅 Subscription created: ${name} (${result.successful}/${result.total} events)`);
         res.json({
@@ -435,12 +1713,12 @@ app.post('/api/events/import-url', upload.none(), async (req, res) => {
       } catch (subscriptionError) {
         if (subscriptionError.message.includes('already subscribed')) {
           // URL already subscribed, just sync it
-          const subscriptions = await getCalendarSubscriptions();
+          const subscriptions = await getCalendarSubscriptions(req.userId, req.supabase);
           const existingSubscription = subscriptions.find(sub => sub.url === url);
           
           if (existingSubscription) {
-            result = await importEventsFromSubscription(existingSubscription.id, eventsData);
-            await updateCalendarSync(existingSubscription.id);
+            result = await importEventsFromSubscription(existingSubscription.id, eventsData, req.userId, req.supabase);
+            await updateCalendarSync(existingSubscription.id, new Date(), req.userId, req.supabase);
             
             res.json({
               ...result,
@@ -474,9 +1752,9 @@ app.post('/api/events/import-url', upload.none(), async (req, res) => {
 });
 
 // Get all calendar subscriptions
-app.get('/api/calendar-subscriptions', async (req, res) => {
+app.get('/api/calendar-subscriptions', authenticateUser, async (req, res) => {
   try {
-    const subscriptions = await getCalendarSubscriptions();
+    const subscriptions = await getCalendarSubscriptions(req.userId, req.supabase);
     res.json(subscriptions);
   } catch (error) {
     console.error('❌ Error fetching subscriptions:', error);
@@ -485,10 +1763,10 @@ app.get('/api/calendar-subscriptions', async (req, res) => {
 });
 
 // Delete calendar subscription
-app.delete('/api/calendar-subscriptions/:id', async (req, res) => {
+app.delete('/api/calendar-subscriptions/:id', authenticateUser, async (req, res) => {
   try {
     const subscriptionId = parseInt(req.params.id);
-    await deleteCalendarSubscription(subscriptionId);
+    await deleteCalendarSubscription(subscriptionId, req.userId, req.supabase);
     res.json({ success: true, message: 'Calendar subscription deleted' });
   } catch (error) {
     console.error('❌ Error deleting subscription:', error);
@@ -631,16 +1909,63 @@ const startAutoSync = () => {
   syncInterval = setInterval(async () => {
     try {
       console.log('🔄 Auto-sync starting...');
-      const response = await fetch('http://localhost:3001/api/calendar-subscriptions/sync-all', {
-        method: 'POST'
-      });
       
-      if (response.ok) {
-        const result = await response.json();
-        console.log(`✅ Auto-sync complete: ${result.summary.message}`);
-      } else {
-        console.error('❌ Auto-sync failed:', response.statusText);
+      // Direct function call instead of HTTP request to avoid network issues
+      const subscriptions = await getCalendarSubscriptions();
+      let successful = 0;
+      let totalEvents = 0;
+      
+      for (const subscription of subscriptions) {
+        if (!subscription.sync_enabled) continue;
+        
+        try {
+          console.log(`🔄 Auto-syncing: ${subscription.name}`);
+          
+          // Convert webcal:// to https:// for fetching
+          const fetchUrl = subscription.url ? subscription.url.replace(/^webcal:\/\//, 'https://') : null;
+          
+          if (!fetchUrl) {
+            console.log(`⚠️ Skipping subscription with invalid URL: ${subscription.name}`);
+            continue;
+          }
+          
+          const response = await fetch(fetchUrl, { 
+            timeout: 10000,  // 10 second timeout
+            signal: AbortSignal.timeout(10000) 
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          
+          const icalData = await response.text();
+          const parsedEvents = ical.parseICS(icalData);
+          
+          const eventsData = Object.values(parsedEvents)
+            .filter(event => event.type === 'VEVENT')
+            .map(event => {
+              return {
+                title: event.summary || 'Untitled Event',
+                start: new Date(event.start),
+                end: new Date(event.end),
+                color: subscription.color,
+                uid: event.uid
+              };
+            });
+          
+          const result = await importEventsFromSubscription(subscription.id, eventsData);
+          await updateCalendarSync(subscription.id);
+          
+          successful++;
+          totalEvents += result.successful;
+          
+        } catch (syncError) {
+          console.error(`⚠️ Sync failed for ${subscription.name}:`, syncError.message);
+        }
       }
+      
+      console.log(`✅ Auto-sync complete: Synced ${successful}/${subscriptions.length} calendars (${totalEvents} events)`);
+      
     } catch (error) {
       console.error('❌ Auto-sync error:', error.message);
     }
@@ -821,7 +2146,7 @@ app.post('/api/calendar/query', async (req, res) => {
     
     // Use Claude API for intelligent calendar assistance
     const requestBody = {
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-3-5-haiku-20240307',
       max_tokens: 1000,
       messages: [{
         role: 'user',
@@ -1440,13 +2765,11 @@ app.get('/health', (req, res) => {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down server...');
-  await closeDatabase();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Shutting down server...');
-  await closeDatabase();
   process.exit(0);
 });
 

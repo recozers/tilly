@@ -15,7 +15,7 @@ const initDatabase = () => {
         title TEXT NOT NULL,
         start_time DATETIME NOT NULL,
         end_time DATETIME NOT NULL,
-        color TEXT DEFAULT '#3b82f6',
+                      color TEXT DEFAULT '#4A7C2A',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         source_calendar_id INTEGER DEFAULT NULL,
@@ -31,7 +31,7 @@ const initDatabase = () => {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
           url TEXT NOT NULL UNIQUE,
-          color TEXT DEFAULT '#3b82f6',
+          color TEXT DEFAULT '#4A7C2A',
           last_sync DATETIME DEFAULT NULL,
           sync_enabled BOOLEAN DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -73,7 +73,7 @@ const getAllEvents = () => {
 // Create a new event
 const createEvent = (eventData) => {
   return new Promise((resolve, reject) => {
-    const { title, start, end, color = '#3b82f6' } = eventData;
+    const { title, start, end, color = '#4A7C2A' } = eventData;
     
     db.run(
       'INSERT INTO events (title, start_time, end_time, color) VALUES (?, ?, ?, ?)',
@@ -409,7 +409,7 @@ const importEvents = (eventsData) => {
 // Add calendar subscription
 const addCalendarSubscription = (subscriptionData) => {
   return new Promise((resolve, reject) => {
-    const { name, url, color = '#3b82f6' } = subscriptionData;
+    const { name, url, color = '#4A7C2A' } = subscriptionData;
     
     db.run(
       'INSERT INTO calendar_subscriptions (name, url, color) VALUES (?, ?, ?)',

@@ -2,9 +2,9 @@
 const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
-// Debug logging
+// Debug logging (safe - no sensitive data)
 console.log('API Key loaded:', ANTHROPIC_API_KEY ? 'Yes (length: ' + ANTHROPIC_API_KEY.length + ')' : 'No');
-console.log('Environment variables:', import.meta.env);
+// Removed environment variables logging for security
 
 const SYSTEM_PROMPT = `You are Tilly, a helpful calendar assistant. Your job is to parse natural language requests and extract calendar event information.
 
@@ -50,8 +50,10 @@ export const parseEventRequest = async (userMessage) => {
   console.log('parseEventRequest called with:', userMessage);
   console.log('API Key available:', !!ANTHROPIC_API_KEY);
   
-  // Use proxy server instead of direct API calls to avoid CORS
-  const PROXY_URL = 'http://localhost:3001/api/claude';
+  // Use dynamic URL that works in both dev and production
+  const envBase = import.meta.env?.VITE_API_BASE;
+  const API_BASE = envBase && !envBase.includes('localhost') ? envBase : `${window.location.protocol}//${window.location.host}`;
+  const PROXY_URL = `${API_BASE}/api/claude`;
   
   try {
     console.log('Making API request via proxy server...');

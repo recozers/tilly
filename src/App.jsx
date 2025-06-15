@@ -679,11 +679,18 @@ const App = () => {
     setSuccessMessage('')
 
     try {
+      // Attach auth token so backend can satisfy RLS rules
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+
       const formData = new FormData()
-      formData.append('icsFile', selectedFile)
+      formData.append('icalFile', selectedFile) // must match field name expected by server
 
       const response = await fetch('/api/events/import', {
         method: 'POST',
+        headers,
         body: formData
       })
 
@@ -966,8 +973,11 @@ const App = () => {
     }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = { 'Authorization': `Bearer ${session?.access_token}` }
       const response = await fetch(`/api/calendar-subscriptions/${subscriptionId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers
       });
 
       if (response.ok) {
@@ -985,8 +995,11 @@ const App = () => {
   // Sync calendar subscription
   const syncCalendarSubscription = async (subscriptionId) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = { 'Authorization': `Bearer ${session?.access_token}` }
       const response = await fetch(`/api/calendar-subscriptions/${subscriptionId}/sync`, {
-        method: 'POST'
+        method: 'POST',
+        headers
       });
 
       const result = await response.json();

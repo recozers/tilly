@@ -1,7 +1,10 @@
 // API service for calendar events
 import { supabase } from './lib/supabase'
 
-const API_BASE_URL = 'http://localhost:3001/api';
+// Prefer VITE_API_BASE if it exists and is NOT pointing to localhost; otherwise use current host
+const envBase = import.meta.env?.VITE_API_BASE;
+const resolvedBase = envBase && !envBase.includes('localhost') ? envBase : `${window.location.protocol}//${window.location.host}`;
+const API_BASE_URL = `${resolvedBase}/api`;
 
 // Helper function to get auth headers
 const getAuthHeaders = async () => {

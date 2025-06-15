@@ -101,9 +101,8 @@ const createEvent = async (eventData, userId = null, authenticatedSupabase = nul
       color
     }
 
-    // If using authenticated client, user_id will be set automatically by RLS
-    // If no authenticated client, add user_id manually
-    if (userId && !authenticatedSupabase) {
+    // Supabase RLS requires user_id to match auth.uid() for inserts. Always include it when available.
+    if (userId) {
       insertData.user_id = userId
     }
     
@@ -322,7 +321,7 @@ const addCalendarSubscription = async (subscriptionData, userId = null, authenti
 
     const { data, error } = await supabaseClient
       .from('calendar_subscriptions')
-      .insert([{ name, url, color }])
+      .insert([{ name, url, color, ...(userId ? { user_id: userId } : {}) }])
       .select()
       .single()
 
@@ -391,7 +390,7 @@ const deleteCalendarSubscription = async (subscriptionId, userId = null, authent
 }
 
 // Import events (for one-time imports)
-const importEvents = async (eventsData) => {
+const importEvents = async (eventsData, userId = null, authenticatedSupabase = null) => {
   try {
     const successful = []
     const failed = []
@@ -399,7 +398,7 @@ const importEvents = async (eventsData) => {
 
     for (const eventData of eventsData) {
       try {
-        const result = await createEvent(eventData)
+        const result = await createEvent(eventData, userId, authenticatedSupabase)
         successful.push(result)
       } catch (error) {
         failed.push(eventData)
@@ -451,7 +450,8 @@ const importEventsFromSubscription = async (subscriptionId, eventsData, userId =
             end_time: eventData.end.toISOString(),
             color: eventData.color,
             source_calendar_id: subscriptionId,
-            source_event_uid: eventData.uid
+            source_event_uid: eventData.uid,
+            ...(userId ? { user_id: userId } : {})
           }])
           .select()
           .single()

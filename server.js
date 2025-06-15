@@ -4,6 +4,8 @@ const fetch = require('node-fetch');
 const ical = require('ical');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const path = require('path');
+const { RRule, RRuleSet, rrulestr } = require('rrule');
 require('dotenv').config();
 
 // Import Supabase functions instead of SQLite
@@ -26,7 +28,7 @@ const {
 } = require('./supabase.js');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 // Get detailed timezone information for the user
 function getUserTimezoneInfo() {
@@ -174,7 +176,7 @@ const generateICalInvite = (event, organizerEmail = 'noreply@tilly.app') => {
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 20 * 1024 * 1024 // 20MB limit
   },
   fileFilter: (req, file, cb) => {
     // Accept .ics files and text files
@@ -191,6 +193,20 @@ const upload = multer({
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Serve static files in production
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static('dist'));
+  
+  // Catch all handler for SPA routing
+  app.get('*', (req, res, next) => {
+    // Skip API routes
+    if (req.path.startsWith('/api/') || req.path.startsWith('/health')) {
+      return next();
+    }
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  });
+}
 
 // Authentication middleware
 const authenticateUser = async (req, res, next) => {
@@ -513,7 +529,7 @@ app.post('/api/tools/create_event', authenticateUser, async (req, res) => {
 // Tool: move_event - Move/reschedule an existing event
 app.post('/api/tools/move_event', authenticateUser, async (req, res) => {
   try {
-    const { event_id, new_start_time, new_end_time } = req.body;
+    const { event_id, new_start_time, new_end_time, new_title } = req.body;
     
     if (!event_id || !new_start_time || !new_end_time) {
       return res.status(400).json({ 
@@ -1555,60 +1571,130 @@ async function executeSearchEvents(input, req) {
 // ============================================================================
 
 // POST /api/events/import - Import events from iCal file
-app.post('/api/events/import', upload.single('icalFile'), async (req, res) => {
+app.post('/api/events/import', authenticateUser, upload.single('icalFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No iCal file provided' });
     }
 
-    console.log('Processing iCal import:', req.file.originalname);
+    console.log('Processing iCal import:', req.file.originalname, 'Size:', req.file.size, 'bytes');
     
     // Parse the iCal file
-    const icalData = req.file.buffer.toString('utf8');
-    const parsedEvents = ical.parseICS(icalData);
+    const icalDataRaw = req.file.buffer.toString('utf8');
+    console.log('Raw iCal data length:', icalDataRaw.length);
+    console.log('First 500 chars:', icalDataRaw.substring(0, 500));
+    
+    const icalData = unfoldICSLines(icalDataRaw);
+    console.log('Unfolded iCal data length:', icalData.length);
+    
+    let parsedEvents;
+    try {
+      parsedEvents = ical.parseICS(icalData);
+      console.log('Parsed events object keys:', Object.keys(parsedEvents));
+      console.log('Total parsed entries:', Object.keys(parsedEvents).length);
+    } catch (parseError) {
+      console.error('ICS parsing failed:', parseError);
+      return res.status(400).json({ 
+        error: 'Failed to parse iCal file', 
+        details: parseError.message 
+      });
+    }
     
     if (!parsedEvents || Object.keys(parsedEvents).length === 0) {
-      return res.status(400).json({ error: 'No valid events found in the iCal file' });
+      return res.status(400).json({ error: 'No valid entries found in the iCal file' });
     }
 
+    // Debug: show what types of entries we found
+    const entryTypes = {};
+    Object.values(parsedEvents).forEach(entry => {
+      const type = entry.type || 'unknown';
+      entryTypes[type] = (entryTypes[type] || 0) + 1;
+    });
+    console.log('Entry types found:', entryTypes);
+    
     // Convert iCal events to our format
     const eventsToImport = [];
+    const currentYear = new Date().getFullYear();
+    const janFirstThisYear = new Date(currentYear, 0, 1);
+    console.log(`Filtering events from ${janFirstThisYear.toISOString()} onwards`);
     
     for (const [key, event] of Object.entries(parsedEvents)) {
+      console.log(`Processing entry ${key}:`, {
+        type: event.type,
+        summary: event.summary,
+        start: event.start,
+        end: event.end,
+        hasRrule: !!event.rrule
+      });
+      
       // Skip non-event entries (like VTIMEZONE)
-      if (event.type !== 'VEVENT') continue;
+      if (event.type !== 'VEVENT') {
+        console.log(`Skipping non-VEVENT entry: ${event.type}`);
+        continue;
+      }
       
       try {
         // Extract event data
         const title = event.summary || 'Untitled Event';
+        console.log(`Processing VEVENT: "${title}"`);
+        
         const start = event.start ? new Date(event.start) : null;
-        const end = event.end ? new Date(event.end) : null;
+        console.log(`Start date: ${event.start} -> ${start}`);
         
-        // Validate dates
-        if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
-          console.warn(`Skipping event with invalid dates: ${title}`);
+        // Some calendars (e.g., Google) omit DTEND for all-day or point events.
+        // If end is missing or invalid, default to one hour after start (or same day for all-day)
+        let end = event.end ? new Date(event.end) : null;
+        console.log(`End date: ${event.end} -> ${end}`);
+        
+        if (!end || isNaN(end.getTime())) {
+          end = new Date(start.getTime() + 60 * 60 * 1000); // +1h fallback
+          console.log(`Applied 1-hour fallback end: ${end}`);
+        }
+        
+        // Validate start date
+        if (!start || isNaN(start.getTime())) {
+          console.warn(`Skipping event with invalid start date: ${title} (start: ${event.start})`);
           continue;
         }
         
+        // Ensure end is after start; if not, extend by one hour
         if (start >= end) {
-          console.warn(`Skipping event with invalid time range: ${title}`);
-          continue;
+          end = new Date(start.getTime() + 60 * 60 * 1000);
+          console.log(`Adjusted end to be after start: ${end}`);
         }
         
-        // Handle recurring events (basic support)
-        if (event.rrule) {
-          console.log(`Note: Recurring event "${title}" imported as single occurrence`);
-        }
-        
-        eventsToImport.push({
-          title,
+        // Normalize the event for processing
+        const normalizedEvent = {
+          ...event,
           start,
           end,
-          color: '#10b981' // Use green color for imported events
-        });
+          summary: title
+        };
+        
+        // Handle recurring events - expand into individual instances
+        const expandedEvents = expandRecurringEvent(normalizedEvent);
+        
+        for (const expandedEvent of expandedEvents) {
+          // Skip events before current year to avoid importing thousands of old events
+          if (expandedEvent.start < janFirstThisYear) {
+            console.log(`Skipping old event: ${expandedEvent.title || expandedEvent.summary} (${expandedEvent.start.toISOString()})`);
+            continue;
+          }
+          
+          const eventToImport = {
+            title: expandedEvent.title || expandedEvent.summary,
+            start: expandedEvent.start,
+            end: expandedEvent.end,
+            color: '#10b981' // Use green color for imported events
+          };
+          
+          console.log(`Successfully processed event:`, eventToImport);
+          eventsToImport.push(eventToImport);
+        }
         
       } catch (eventError) {
         console.error(`Error processing event ${key}:`, eventError);
+        console.error(`Event data:`, event);
       }
     }
     
@@ -1621,7 +1707,7 @@ app.post('/api/events/import', upload.single('icalFile'), async (req, res) => {
     console.log(`Importing ${eventsToImport.length} events...`);
     
     // Import events to database
-    const result = await importEvents(eventsToImport);
+    const result = await importEvents(eventsToImport, req.userId, req.supabase);
     
     console.log('Import completed:', result);
     
@@ -1673,20 +1759,52 @@ app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, 
       throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
     }
 
-    const icalData = await response.text();
+    const icalDataRaw = await response.text();
+    const icalData = unfoldICSLines(icalDataRaw);
     const parsedEvents = ical.parseICS(icalData);
 
-    const eventsData = Object.values(parsedEvents)
-      .filter(event => event.type === 'VEVENT')
-      .map(event => {
-        return {
-          title: event.summary || 'Untitled Event',
-          start: new Date(event.start),
-          end: new Date(event.end),
+    const currentYear = new Date().getFullYear();
+    const janFirstThisYear = new Date(currentYear, 0, 1);
+    console.log(`Filtering URL events from ${janFirstThisYear.toISOString()} onwards`);
+    
+    const eventsData = [];
+    
+    for (const event of Object.values(parsedEvents)) {
+      if (event.type !== 'VEVENT') continue;
+      
+      const start = new Date(event.start);
+      let end = event.end ? new Date(event.end) : null;
+      if (!end || isNaN(end.getTime())) {
+        end = new Date(start.getTime() + 60 * 60 * 1000);
+      }
+      if (start >= end) {
+        end = new Date(start.getTime() + 60 * 60 * 1000);
+      }
+      
+      // Normalize the event for processing
+      const normalizedEvent = {
+        ...event,
+        start,
+        end,
+        summary: event.summary || 'Untitled Event'
+      };
+      
+      // Handle recurring events - expand into individual instances
+      const expandedEvents = expandRecurringEvent(normalizedEvent);
+      
+      for (const expandedEvent of expandedEvents) {
+        // Skip events before current year
+        if (expandedEvent.start < janFirstThisYear) continue;
+        
+        eventsData.push({
+          title: expandedEvent.title || expandedEvent.summary,
+          start: expandedEvent.start,
+          end: expandedEvent.end,
           color: '#4A7C2A', // Default lighter green for URL imports
-          uid: event.uid
-        };
-      });
+          uid: expandedEvent.uid || event.uid
+        });
+      }
+    }
 
     let result;
     let subscriptionId = null;
@@ -1734,7 +1852,7 @@ app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, 
       }
     } else {
       // One-time import (original behavior)
-      result = await importEvents(eventsData);
+      result = await importEvents(eventsData, req.userId, req.supabase);
       console.log(`📊 One-time import: ${result.successful}/${result.total} events imported`);
       res.json({
         ...result,
@@ -1796,22 +1914,53 @@ app.post('/api/calendar-subscriptions/:id/sync', async (req, res) => {
       throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
     }
 
-    const icalData = await response.text();
+    const icalDataRaw = await response.text();
+    const icalData = unfoldICSLines(icalDataRaw);
     const parsedEvents = ical.parseICS(icalData);
 
-    const eventsData = Object.values(parsedEvents)
-      .filter(event => event.type === 'VEVENT')
-      .map(event => {
-        return {
-          title: event.summary || 'Untitled Event',
-          start: new Date(event.start),
-          end: new Date(event.end),
+    const currentYear = new Date().getFullYear();
+    const janFirstThisYear = new Date(currentYear, 0, 1);
+    
+    const eventsData = [];
+    
+    for (const event of Object.values(parsedEvents)) {
+      if (event.type !== 'VEVENT') continue;
+      
+      const start = new Date(event.start);
+      let end = event.end ? new Date(event.end) : null;
+      if (!end || isNaN(end.getTime())) {
+        end = new Date(start.getTime() + 60 * 60 * 1000);
+      }
+      if (start >= end) {
+        end = new Date(start.getTime() + 60 * 60 * 1000);
+      }
+      
+      // Normalize the event for processing
+      const normalizedEvent = {
+        ...event,
+        start,
+        end,
+        summary: event.summary || 'Untitled Event'
+      };
+      
+      // Handle recurring events - expand into individual instances
+      const expandedEvents = expandRecurringEvent(normalizedEvent);
+      
+      for (const expandedEvent of expandedEvents) {
+        // Skip events before current year
+        if (expandedEvent.start < janFirstThisYear) continue;
+        
+        eventsData.push({
+          title: expandedEvent.title || expandedEvent.summary,
+          start: expandedEvent.start,
+          end: expandedEvent.end,
           color: subscription.color,
-          uid: event.uid
-        };
-      });
+          uid: expandedEvent.uid || event.uid
+        });
+      }
+    }
 
-    const result = await importEventsFromSubscription(subscriptionId, eventsData);
+    const result = await importEventsFromSubscription(subscriptionId, eventsData, req.userId, req.supabase);
     await updateCalendarSync(subscriptionId);
     
     console.log(`✅ Sync complete: ${subscription.name} (${result.successful}/${result.total} events)`);
@@ -1847,22 +1996,53 @@ app.post('/api/calendar-subscriptions/sync-all', async (req, res) => {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const icalData = await response.text();
+        const icalDataRaw = await response.text();
+        const icalData = unfoldICSLines(icalDataRaw);
         const parsedEvents = ical.parseICS(icalData);
 
-        const eventsData = Object.values(parsedEvents)
-          .filter(event => event.type === 'VEVENT')
-          .map(event => {
-            return {
-              title: event.summary || 'Untitled Event',
-              start: new Date(event.start),
-              end: new Date(event.end),
+        const currentYear = new Date().getFullYear();
+        const janFirstThisYear = new Date(currentYear, 0, 1);
+        
+        const eventsData = [];
+        
+        for (const event of Object.values(parsedEvents)) {
+          if (event.type !== 'VEVENT') continue;
+          
+          const start = new Date(event.start);
+          let end = event.end ? new Date(event.end) : null;
+          if (!end || isNaN(end.getTime())) {
+            end = new Date(start.getTime() + 60 * 60 * 1000);
+          }
+          if (start >= end) {
+            end = new Date(start.getTime() + 60 * 60 * 1000);
+          }
+          
+          // Normalize the event for processing
+          const normalizedEvent = {
+            ...event,
+            start,
+            end,
+            summary: event.summary || 'Untitled Event'
+          };
+          
+          // Handle recurring events - expand into individual instances
+          const expandedEvents = expandRecurringEvent(normalizedEvent);
+          
+          for (const expandedEvent of expandedEvents) {
+            // Skip events before current year
+            if (expandedEvent.start < janFirstThisYear) continue;
+            
+            eventsData.push({
+              title: expandedEvent.title || expandedEvent.summary,
+              start: expandedEvent.start,
+              end: expandedEvent.end,
               color: subscription.color,
-              uid: event.uid
-            };
-          });
+              uid: expandedEvent.uid || event.uid
+            });
+          }
+        }
 
-        const result = await importEventsFromSubscription(subscription.id, eventsData);
+        const result = await importEventsFromSubscription(subscription.id, eventsData, req.userId, req.supabase);
         await updateCalendarSync(subscription.id);
         
         results.push({
@@ -1938,22 +2118,53 @@ const startAutoSync = () => {
             throw new Error(`HTTP ${response.status}`);
           }
           
-          const icalData = await response.text();
+          const icalDataRaw = await response.text();
+          const icalData = unfoldICSLines(icalDataRaw);
           const parsedEvents = ical.parseICS(icalData);
           
-          const eventsData = Object.values(parsedEvents)
-            .filter(event => event.type === 'VEVENT')
-            .map(event => {
-              return {
-                title: event.summary || 'Untitled Event',
-                start: new Date(event.start),
-                end: new Date(event.end),
-                color: subscription.color,
-                uid: event.uid
-              };
-            });
+          const currentYear = new Date().getFullYear();
+          const janFirstThisYear = new Date(currentYear, 0, 1);
           
-          const result = await importEventsFromSubscription(subscription.id, eventsData);
+          const eventsData = [];
+          
+          for (const event of Object.values(parsedEvents)) {
+            if (event.type !== 'VEVENT') continue;
+            
+            const start = new Date(event.start);
+            let end = event.end ? new Date(event.end) : null;
+            if (!end || isNaN(end.getTime())) {
+              end = new Date(start.getTime() + 60 * 60 * 1000);
+            }
+            if (start >= end) {
+              end = new Date(start.getTime() + 60 * 60 * 1000);
+            }
+            
+            // Normalize the event for processing
+            const normalizedEvent = {
+              ...event,
+              start,
+              end,
+              summary: event.summary || 'Untitled Event'
+            };
+            
+            // Handle recurring events - expand into individual instances
+            const expandedEvents = expandRecurringEvent(normalizedEvent);
+            
+            for (const expandedEvent of expandedEvents) {
+              // Skip events before current year
+              if (expandedEvent.start < janFirstThisYear) continue;
+              
+              eventsData.push({
+                title: expandedEvent.title || expandedEvent.summary,
+                start: expandedEvent.start,
+                end: expandedEvent.end,
+                color: subscription.color,
+                uid: expandedEvent.uid || event.uid
+              });
+            }
+          }
+          
+          const result = await importEventsFromSubscription(subscription.id, eventsData, req.userId, req.supabase);
           await updateCalendarSync(subscription.id);
           
           successful++;
@@ -2773,9 +2984,112 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-app.listen(PORT, () => {
-  console.log(`Proxy server running on http://localhost:${PORT}`);
-  console.log(`API endpoint: http://localhost:${PORT}/api/claude`);
-  console.log(`Events API: http://localhost:${PORT}/api/events`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+// Validate required environment variables
+const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  console.warn('⚠️  Missing environment variables:', missingEnvVars.join(', '));
+  console.warn('⚠️  Some features may not work correctly without these variables');
+}
+
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.warn('⚠️  Missing ANTHROPIC_API_KEY - AI features will not work');
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Tilly Calendar server running on port ${PORT}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 API endpoint: http://localhost:${PORT}/api/claude`);
+  console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
+  console.log(`❤️  Health check: http://localhost:${PORT}/health`);
+  
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`🌐 Serving static files from dist/`);
+  }
+  
+  // Start auto-sync if enabled
+  if (process.env.NODE_ENV === 'production') {
+    startAutoSync();
+  }
 }); 
+
+// Helper to unfold folded lines in ICS text per RFC 5545
+function unfoldICSLines(icsText) {
+  return icsText.replace(/\r?\n[ \t]/g, '');
+}
+
+// Expand recurring events into individual instances
+function expandRecurringEvent(event, maxInstances = 100) {
+  try {
+    if (!event.rrule) {
+      return [event]; // Not a recurring event, return as-is
+    }
+
+    console.log(`📅 Expanding recurring event: "${event.summary}" with RRULE: ${event.rrule}`);
+    
+    const startDate = new Date(event.start);
+    const endDate = new Date(event.end);
+    const duration = endDate.getTime() - startDate.getTime();
+    
+    // Parse the RRULE
+    let rrule;
+    try {
+      // Handle different RRULE formats
+      let rruleString = event.rrule.toString();
+      
+      // If it's already a string, use it directly
+      if (typeof event.rrule === 'string') {
+        rruleString = event.rrule;
+      }
+      
+      // Ensure RRULE string starts with "RRULE:"
+      if (!rruleString.startsWith('RRULE:')) {
+        rruleString = 'RRULE:' + rruleString;
+      }
+      
+      rrule = rrulestr(rruleString, { dtstart: startDate });
+    } catch (rruleError) {
+      console.warn(`⚠️ Failed to parse RRULE for "${event.summary}": ${rruleError.message}`);
+      return [event]; // Return original event if RRULE parsing fails
+    }
+    
+    // Set a reasonable limit for expansion (avoid infinite loops)
+    const currentYear = new Date().getFullYear();
+    const maxDate = new Date(currentYear + 2, 11, 31); // 2 years from now
+    
+    // Generate occurrences
+    const occurrences = rrule.between(
+      new Date(currentYear, 0, 1), // Start from current year
+      maxDate,
+      true, // inclusive
+      (date, i) => i < maxInstances // Limit number of instances
+    );
+    
+    console.log(`🔄 Generated ${occurrences.length} occurrences for "${event.summary}"`);
+    
+    // Create individual event instances
+    const expandedEvents = occurrences.map((occurrenceStart, index) => {
+      const occurrenceEnd = new Date(occurrenceStart.getTime() + duration);
+      
+      return {
+        ...event,
+        start: occurrenceStart,
+        end: occurrenceEnd,
+        // Add a suffix to distinguish recurring instances (but keep original title for most cases)
+        summary: event.summary,
+        title: event.summary || 'Untitled Event',
+        // Keep track of the original recurring event
+        originalEvent: event,
+        recurrenceIndex: index,
+        isRecurringInstance: true
+      };
+    });
+    
+    return expandedEvents;
+    
+  } catch (error) {
+    console.error(`❌ Error expanding recurring event "${event.summary}":`, error);
+    return [event]; // Return original event on error
+  }
+} 

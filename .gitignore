@@ -97,3 +97,5 @@ temp/
 *.sqlite
 *.sqlite3
 calendar.db
+
+.env.production

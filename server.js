@@ -2318,7 +2318,7 @@ app.post('/api/events/:id/invite', async (req, res) => {
 });
   
   // AI Calendar Query endpoint
-app.post('/api/calendar/query', async (req, res) => {
+app.post('/api/calendar/query', authenticateUser, async (req, res) => {
   try {
     const { query, chatHistory = [] } = req.body;
     
@@ -2331,11 +2331,11 @@ app.post('/api/calendar/query', async (req, res) => {
     const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
     const next7Days = new Date(today.getTime() + (7 * 24 * 60 * 60 * 1000));
     
-    const recentEvents = await getEventsByDateRange(today, next7Days);
-    const todayEvents = await getEventsForPeriod('today');
-    const tomorrowEvents = await getEventsForPeriod('tomorrow');
+    const recentEvents = await getEventsByDateRange(today, next7Days, req.userId, req.supabase);
+    const todayEvents = await getEventsForPeriod('today', req.userId, req.supabase);
+    const tomorrowEvents = await getEventsForPeriod('tomorrow', req.userId, req.supabase);
     const upcomingEvents = recentEvents.slice(0, 20); // Limit to 20 most recent
-    const stats = await getCalendarStats('this_week');
+    const stats = await getCalendarStats('this_week', req.userId, req.supabase);
     
     // Create calendar context for Claude
     const now = currentTime;

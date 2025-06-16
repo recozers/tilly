@@ -282,7 +282,7 @@ const getUpcomingEvents = async (limit = 10) => {
 }
 
 // Get events for a specific period (today, tomorrow, this_week, etc.)
-const getEventsForPeriod = async (period) => {
+const getEventsForPeriod = async (period, userId = null, authenticatedSupabase = null) => {
   try {
     const now = new Date()
     let startDate, endDate
@@ -306,7 +306,7 @@ const getEventsForPeriod = async (period) => {
         throw new Error(`Unsupported period: ${period}`)
     }
 
-    return await getEventsByDateRange(startDate, endDate)
+    return await getEventsByDateRange(startDate, endDate, userId, authenticatedSupabase)
   } catch (error) {
     console.error('Error fetching events for period:', error)
     throw error
@@ -485,9 +485,9 @@ const importEventsFromSubscription = async (subscriptionId, eventsData, userId =
 }
 
 // Get calendar stats
-const getCalendarStats = async (period = 'this_week') => {
+const getCalendarStats = async (period = 'this_week', userId = null, authenticatedSupabase = null) => {
   try {
-    const events = await getEventsForPeriod(period)
+    const events = await getEventsForPeriod(period, userId, authenticatedSupabase)
     
     const totalEvents = events.length
     let totalHours = 0

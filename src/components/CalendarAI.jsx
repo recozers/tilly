@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
 import './CalendarAI.css';
 
 const CalendarAI = () => {
@@ -36,11 +37,16 @@ const CalendarAI = () => {
     setIsLoading(true);
 
     try {
+      // Get auth headers
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`
+      };
+
       const response = await fetch('/api/calendar/query', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({ query: inputValue }),
       });
 

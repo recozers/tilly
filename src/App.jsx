@@ -6,6 +6,7 @@ import { supabase } from './lib/supabase'
 import AuthModal from './components/Auth/AuthModal'
 import UserProfile from './components/Auth/UserProfile'
 import './App.css'
+import useEventLayout from './hooks/useEventLayout'
 
 const App = () => {
   const { user, loading: authLoading } = useAuth()
@@ -63,6 +64,9 @@ const App = () => {
   const [inviteEmails, setInviteEmails] = useState([''])
   const [inviteMessage, setInviteMessage] = useState('')
   const [isSendingInvites, setIsSendingInvites] = useState(false)
+
+  // Use the event layout hook for proper overlapping
+  const eventsWithLayout = useEventLayout(events)
 
   // Ref for auto-scrolling chat
   const messagesEndRef = useRef(null)
@@ -661,6 +665,12 @@ const App = () => {
     setCurrentDate(new Date())
   }
 
+  // Jump to a specific month/year
+  const goToDate = (year, month) => {
+    const targetDate = new Date(year, month, 1)
+    setCurrentDate(targetDate)
+  }
+
   // Enhanced import functions
   const handleFileSelect = (e) => {
     setSelectedFile(e.target.files[0])
@@ -888,7 +898,8 @@ const App = () => {
         headers,
         body: JSON.stringify({ 
           message: messageText,
-          chatHistory: chatHistory
+          chatHistory: chatHistory,
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
         }),
       })
 
@@ -1097,6 +1108,7 @@ const App = () => {
               >
                 ›
               </button>
+              
               <div className="import-dropdown">
                 <button
                   onClick={() => setShowDropdown(!showDropdown)}
@@ -1313,7 +1325,7 @@ const App = () => {
                     disabled={isSendingInvites}
                     style={{
                       padding: '8px 12px',
-                      backgroundColor: '#10b981',
+                      backgroundColor: '#4A7C2A',
                       color: 'white',
                       border: 'none',
                       borderRadius: '4px',
@@ -1598,6 +1610,10 @@ const App = () => {
                           const dimensions = calculateEventDimensions(event, date, events)
                           if (!dimensions) return null
                           
+                          // Get layout data from hook for overlapping positioning
+                          const layoutEvent = eventsWithLayout.find(e => e.id === event.id)
+                          const useOverlapLayout = layoutEvent && layoutEvent.width < 95
+                          
                           const eventStart = new Date(event.start)
                           const eventEnd = new Date(event.end)
                           const duration = (eventEnd - eventStart) / (1000 * 60)
@@ -1610,8 +1626,8 @@ const App = () => {
                               style={{
                                 position: 'absolute',
                                 top: `${dimensions.top}px`,
-                                left: `${dimensions.leftPercentage}%`,
-                                width: `${dimensions.widthPercentage}%`,
+                                left: useOverlapLayout ? `${layoutEvent.left}%` : `${dimensions.leftPercentage}%`,
+                                width: useOverlapLayout ? `${layoutEvent.width}%` : `${dimensions.widthPercentage}%`,
                                 height: `${dimensions.height}px`,
                                 paddingLeft: '2px',
                                 paddingRight: '2px',
@@ -1622,7 +1638,7 @@ const App = () => {
                                 fontSize: '12px',
                                 fontWeight: '500',
                                 cursor: 'grab',
-                                zIndex: isBeingDragged ? 1000 : 100,
+                                zIndex: isBeingDragged ? 1000 : (useOverlapLayout ? layoutEvent.zIndex : 100),
                                 overflow: 'hidden',
                                 boxShadow: isBeingDragged 
                                   ? '0 8px 25px rgba(0, 0, 0, 0.3)' 
@@ -1637,12 +1653,24 @@ const App = () => {
                                 maxWidth: '100%'  // Prevent overflow past column
                               }}
                               onMouseEnter={(e) => {
+                                // Bring event to front with higher z-index and enhanced shadow
+                                e.currentTarget.style.zIndex = '999'
+                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)'
+                                
+                                // Show action buttons
                                 const deleteBtn = e.currentTarget.querySelector('.delete-button')
                                 const inviteBtn = e.currentTarget.querySelector('.invite-button')
                                 if (deleteBtn) deleteBtn.style.opacity = '1'
                                 if (inviteBtn) inviteBtn.style.opacity = '1'
                               }}
                               onMouseLeave={(e) => {
+                                // Reset z-index and shadow
+                                e.currentTarget.style.zIndex = isBeingDragged ? '1000' : (useOverlapLayout ? layoutEvent.zIndex : '100')
+                                e.currentTarget.style.boxShadow = isBeingDragged 
+                                  ? '0 8px 25px rgba(0, 0, 0, 0.3)' 
+                                  : '0 1px 3px rgba(0, 0, 0, 0.2)'
+                                
+                                // Hide action buttons
                                 const deleteBtn = e.currentTarget.querySelector('.delete-button')
                                 const inviteBtn = e.currentTarget.querySelector('.invite-button')
                                 if (deleteBtn) deleteBtn.style.opacity = '0'

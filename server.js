@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 const ical = require('ical');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
@@ -24,16 +23,19 @@ const {
   getCalendarSubscriptions,
   updateCalendarSync,
   deleteCalendarSubscription,
-  importEventsFromSubscription
+  importEventsFromSubscription,
+  getUpcomingEvents
 } = require('./supabase.js');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Get detailed timezone information for the user
-function getUserTimezoneInfo() {
+function getUserTimezoneInfo(userTimeZone = null) {
+  console.log('🌍 === TIMEZONE INFO DEBUG START ===');
   const now = new Date();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timeZone = userTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  console.log('🌍 Detected/provided timezone:', timeZone);
   
   // Get the timezone offset in hours and minutes
   const offsetMinutes = -now.getTimezoneOffset();
@@ -41,30 +43,44 @@ function getUserTimezoneInfo() {
   const offsetMinutesRemainder = Math.abs(offsetMinutes) % 60;
   const offsetSign = offsetMinutes >= 0 ? '+' : '-';
   const offsetFormatted = `UTC${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutesRemainder).padStart(2, '0')}`;
+  console.log('🌍 Current offset:', offsetFormatted, `(${offsetMinutes} minutes)`);
   
   // Check if it's daylight saving time
   const jan = new Date(now.getFullYear(), 0, 1);
   const jul = new Date(now.getFullYear(), 6, 1);
   const isDST = now.getTimezoneOffset() < Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+  console.log('🌍 DST status:', isDST ? 'ACTIVE' : 'INACTIVE');
+  console.log('🌍 January offset:', -jan.getTimezoneOffset(), 'minutes');
+  console.log('🌍 July offset:', -jul.getTimezoneOffset(), 'minutes');
   
   // Get current time in local format
-  const localTimeStr = now.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit',
-    hour12: true,
-    timeZone 
-  });
+  let localTimeStr;
+  try {
+    localTimeStr = now.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true,
+      timeZone 
+    });
+    console.log('🌍 Local time string created successfully:', localTimeStr);
+  } catch (localTimeError) {
+    console.log('🌍 ERROR creating local time string:', localTimeError.message);
+    localTimeStr = 'ERROR';
+  }
   
   // Get timezone abbreviation (approximate)
   let tzAbbr;
   try {
     tzAbbr = now.toLocaleTimeString('en-US', { timeZoneName: 'short' })
       .split(' ').pop();
+    console.log('🌍 Timezone abbreviation:', tzAbbr);
   } catch (e) {
+    console.log('🌍 ERROR getting timezone abbreviation:', e.message);
     tzAbbr = isDST ? 'DST' : 'STD';
+    console.log('🌍 Fallback timezone abbreviation:', tzAbbr);
   }
   
-  return {
+  const result = {
     timeZone,
     offsetFormatted,
     offsetMinutes,
@@ -73,6 +89,11 @@ function getUserTimezoneInfo() {
     tzAbbr,
     utcTimeStr: now.toISOString()
   };
+  
+  console.log('🌍 Final timezone info:', result);
+  console.log('🌍 === TIMEZONE INFO DEBUG END ===');
+  
+  return result;
 }
 
 // Convert local time to UTC
@@ -115,16 +136,78 @@ function localToUTC(localTimeStr, dateStr = null) {
   return date.toISOString();
 }
 
-// Convert UTC to local time string
-function utcToLocal(utcTimeStr, format = '12h') {
+// SIMPLE: Convert local time string to UTC
+function convertLocalTimeToUTC(localTimeStr) {
+  const userTimeZone = arguments[1] || 'Europe/London';
+  
+  console.log('🕐 Converting', localTimeStr, 'from timezone', userTimeZone);
+  
+  // If already has timezone offset (+/-), use directly
+  // But if it's just 'Z' and we have a userTimeZone, treat as local time
+  if (localTimeStr.match(/[Z]$/)) {
+    // Strip Z and treat as local time in user's timezone
+    console.log('🕐 Stripping Z suffix to treat as local time');
+    localTimeStr = localTimeStr.replace(/\.?000?Z$/, '');
+  } else if (localTimeStr.match(/[+-]\d{2}:?\d{2}$/)) {
+    // Has explicit offset like +01:00 or -0500, use directly
+    const result = new Date(localTimeStr);
+    console.log('🕐 Already has offset, result:', result.toISOString());
+    return result;
+  }
+  
+  // Dead simple approach: treat as UTC first, then adjust for timezone
+  const utcDate = new Date(localTimeStr + 'Z'); // Force UTC interpretation
+  
+  // Now we need to subtract the user's timezone offset
+  // In June 2025, Europe/London will be BST (UTC+1), so we subtract 1 hour
+  const tempFormatter = new Intl.DateTimeFormat('en', {
+    timeZone: userTimeZone,
+    timeZoneName: 'longOffset'
+  });
+  
+  const offsetString = tempFormatter.formatToParts(utcDate).find(part => part.type === 'timeZoneName')?.value || '+00:00';
+  console.log('🕐 Detected offset for', userTimeZone, ':', offsetString);
+  
+  // Parse offset (e.g., "+01:00" -> 1 hour)
+  const offsetMatch = offsetString.match(/([+-])(\d{2}):(\d{2})/);
+  if (offsetMatch) {
+    const [, sign, hours, minutes] = offsetMatch;
+    const offsetMs = (parseInt(hours) * 60 + parseInt(minutes)) * 60000;
+    const adjustedMs = sign === '+' ? utcDate.getTime() - offsetMs : utcDate.getTime() + offsetMs;
+    const result = new Date(adjustedMs);
+    
+    console.log('🕐 Result:', result.toISOString());
+    return result;
+  }
+  
+  // Fallback - just return the UTC interpretation
+  console.log('🕐 Fallback result:', utcDate.toISOString());
+  return utcDate;
+}
+
+// Convert UTC to local time string in user's timezone
+function utcToLocal(utcTimeStr, format = '12h', userTimeZone = null) {
   const date = new Date(utcTimeStr);
+  // Force user timezone instead of detecting server timezone
+  const targetTimeZone = userTimeZone || 'Europe/London';
   const options = { 
     hour: '2-digit', 
     minute: '2-digit',
-    hour12: format === '12h'
+    hour12: format === '12h',
+    timeZone: targetTimeZone
   };
   
-  return date.toLocaleTimeString('en-US', options);
+  try {
+    return date.toLocaleTimeString('en-GB', options);
+  } catch (error) {
+    console.log('🕐 Error in utcToLocal with timezone', targetTimeZone, ':', error.message);
+    // Fallback to basic formatting if timezone is not available
+    return date.toLocaleTimeString('en-GB', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: format === '12h'
+    });
+  }
 }
 
 // Email transporter configuration
@@ -254,40 +337,165 @@ const authenticateUser = async (req, res, next) => {
 // Supabase doesn't need initialization - it's ready to use!
 
 // Anthropic API proxy endpoint
-app.post('/api/claude', async (req, res) => {
+app.post('/api/claude', authenticateUser, async (req, res) => {
   try {
-    console.log('Proxying request to Anthropic API...');
+    const { message, chatHistory, userTimeZone } = req.body;
+
+    // Store user's timezone in request for tool functions
+    req.userTimeZone = userTimeZone;
+
+    // Get user's timezone info - use provided timezone from frontend
+    const timezoneInfo = getUserTimezoneInfo(userTimeZone);
+
+    // Get today's and tomorrow's dates
+    const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(today.getDate() + 1);
+
+    // Fetch calendar data for context, NOW CORRECTLY SCOPED TO THE USER
+    const [todayEvents, tomorrowEvents, upcomingEvents, weeklyStats, allEvents] = await Promise.all([
+      getEventsForPeriod('today', req.userId, req.supabase),
+      getEventsForPeriod('tomorrow', req.userId, req.supabase),
+      getUpcomingEvents(15, req.userId, req.supabase),
+      getCalendarStats('this_week', req.userId, req.supabase),
+      getAllEvents(req.userId, req.supabase)
+    ]);
     
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(req.body),
-      timeout: 30000 // 30 second timeout
-    });
+    const context = {
+      userTime: timezoneInfo.localTimeStr,
+      currentDate: today.toLocaleDateString(),
+      currentDay: today.toLocaleDateString('en-US', { weekday: 'long' }),
+      currentLocalTime: today.toLocaleString(),
+      timezone: timezoneInfo.timeZone,
+      totalEvents: todayEvents.length,
+      upcomingEvents: upcomingEvents.slice(0, 10),
+      todayEvents,
+      tomorrowEvents,
+      recentEvents: todayEvents,
+      weeklyStats,
+      chatHistory
+    };
+    
+    // Use Claude API for intelligent calendar assistance
+    const requestBody = {
+      model: 'claude-3-5-haiku-20240307',
+      max_tokens: 1000,
+      messages: [{
+        role: 'user',
+        content: createCalendarPrompt(message, context)
+      }]
+    };
+
+    console.log('🔍 DEBUG: Events being sent to Claude:');
+    console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('📅 Tomorrow events:', tomorrowEvents.length, tomorrowEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('📅 Upcoming events (day after tomorrow+):', upcomingEvents.length, upcomingEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('🔍 DEBUG: Total events in 7-day range:', todayEvents.length);
+    console.log('🔍 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
+    console.log('🔍 DEBUG: API Key length:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.length : 0);
+
+    // Retry logic for handling API overload
+    const makeClaudeRequest = async (retryCount = 0, maxRetries = 3) => {
+      const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+      
+      if (retryCount > 0) {
+        console.log(`🔄 Retrying Claude API request (attempt ${retryCount + 1}/${maxRetries + 1}) after ${delay}ms delay...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify(requestBody),
+        timeout: 30000 // 30 second timeout
+      });
+
+      console.log('🔍 DEBUG: Claude API response status:', response.status);
+      console.log('🔍 DEBUG: Claude API response headers:', Object.fromEntries(response.headers.entries()));
+
+      // Handle overload errors with retry
+      if (response.status === 529 && retryCount < maxRetries) {
+        const errorText = await response.text();
+        console.log(`⚠️ Claude API overloaded (529), retrying... Response: ${errorText}`);
+        return makeClaudeRequest(retryCount + 1, maxRetries);
+      }
+
+      return response;
+    };
+
+    const response = await makeClaudeRequest();
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Anthropic API error:', response.status, errorText);
-      return res.status(response.status).json({ 
-        error: `API request failed: ${response.status} ${response.statusText}`,
-        details: errorText 
-      });
+      console.error('🚨 Claude API Error Response:', errorText);
+      
+      // If Claude API is overloaded after all retries, provide a graceful fallback
+      if (response.status === 529) {
+        console.log('📋 Providing fallback response due to Claude API overload');
+        const fallbackResponse = createFallbackResponse(message, context);
+        res.json({ response: fallbackResponse, context: context });
+        return;
+      }
+      
+      throw new Error(`Claude API request failed: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
-    console.log('Successfully proxied request to Anthropic API');
-    res.json(data);
-
+    const claudeData = await response.json();
+    const claudeResponse = claudeData.content[0].text;
+    
+    // Try to extract JSON from the response (could be mixed with text)
+    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      try {
+        const actionData = JSON.parse(jsonMatch[0]);
+        if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement' || actionData.type === 'multiple_actions') {
+          // Validate the action data before sending to frontend
+          const validationResult = validateActionData(actionData, context);
+          if (!validationResult.valid) {
+            console.error('🚨 Claude response validation failed:', validationResult.error);
+            console.error('🚨 Original Claude response:', claudeResponse);
+            // Send error response back to user explaining the issue
+            res.status(400).json({ 
+              error: 'Invalid calendar response detected',
+              details: validationResult.error,
+              suggestion: 'Please try rephrasing your request or ask for a different time slot.'
+            });
+            return;
+          } else {
+            // Extract the text part (everything before the JSON)
+            const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
+            
+            // Return both the conversational text and the structured action data
+            res.json({ 
+              response: {
+                type: actionData.type,
+                message: textPart || actionData.message,
+                eventData: actionData.eventData,
+                rearrangements: actionData.rearrangements || null,
+                actions: actionData.actions || null
+              }, 
+              context: context 
+            });
+            return;
+          }
+        }
+      } catch (e) {
+        // JSON parsing failed, treat as regular text
+        console.warn('Failed to parse JSON from Claude response:', e.message);
+        console.warn('Original Claude response:', claudeResponse);
+      }
+    }
+    
+    // Regular text response
+    res.json({ response: claudeResponse, context: context });
   } catch (error) {
-    console.error('Proxy server error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error', 
-      details: error.message 
-    });
+    console.error('Error processing calendar query:', error);
+    res.status(500).json({ error: 'Failed to process calendar query' });
   }
 });
 
@@ -320,7 +528,7 @@ app.get('/api/events/range', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Invalid date format' });
     }
     
-    const events = await getEventsByDateRange(startDate, endDate);
+    const events = await getEventsByDateRange(startDate, endDate, req.userId, req.supabase);
     res.json(events);
   } catch (error) {
     console.error('Error fetching events by date range:', error);
@@ -643,7 +851,14 @@ app.post('/api/tools/check_time_conflicts', authenticateUser, async (req, res) =
 // NEW: Tool-based Claude AI endpoint
 app.post('/api/ai/chat', authenticateUser, async (req, res) => {
   try {
-    const { message, chatHistory = [] } = req.body;
+    const { message, chatHistory = [], userTimeZone } = req.body;
+    
+    console.log('🌐 === AI CHAT REQUEST DEBUG ===');
+    console.log('🌐 Received userTimeZone:', userTimeZone);
+    console.log('🌐 Server detected timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+    
+    // Store user's timezone in request for tool functions
+    req.userTimeZone = userTimeZone;
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
@@ -680,11 +895,11 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
             },
             start_time: {
               type: "string",
-              description: "Start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "Start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             end_time: {
               type: "string",
-              description: "End time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "End time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             description: {
               type: "string",
@@ -706,11 +921,11 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
             },
             new_start_time: {
               type: "string",
-              description: "New start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "New start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             new_end_time: {
               type: "string",
-              description: "New end time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "New end time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             new_title: {
               type: "string",
@@ -728,11 +943,11 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
           properties: {
             start_time: {
               type: "string",
-              description: "Proposed start time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "Proposed start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             end_time: {
               type: "string",
-              description: "Proposed end time in ISO format (YYYY-MM-DDTHH:MM:SS)"
+              description: "Proposed end time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
             },
             exclude_event_id: {
               type: "integer",
@@ -792,11 +1007,11 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
     // Format events for the prompt
     const formatEventsForPrompt = (events, day) => {
       if (events.length === 0) return `${day}: No events scheduled`;
-      return `${day}: ${events.map(e => `"${e.title}" (${utcToLocal(e.start)} - ${utcToLocal(e.end)})`).join(', ')}`;
+      return `${day}: ${events.map(e => `"${e.title}" (${utcToLocal(e.start, '12h', req.userTimeZone)} - ${utcToLocal(e.end, '12h', req.userTimeZone)})`).join(', ')}`;
     };
 
     // Create system prompt with detailed timezone information
-    const tzInfo = getUserTimezoneInfo();
+    const tzInfo = getUserTimezoneInfo(req.userTimeZone);
     const systemPrompt = `You are Tilly, a helpful calendar assistant. 
 
 CURRENT CONTEXT:
@@ -813,22 +1028,22 @@ UPCOMING EVENTS:
 
 IMPORTANT TIME HANDLING:
 - When DISPLAYING times to the user, ALWAYS convert from UTC to ${tzInfo.timeZone} (${tzInfo.offsetFormatted})
-- When CALLING TOOLS, always use UTC/ISO format (YYYY-MM-DDTHH:MM:SS)
-- When the user mentions times like "3pm", interpret that as ${tzInfo.timeZone} time and convert to UTC for tools
+- When CALLING TOOLS, always use LOCAL TIME format (YYYY-MM-DDTHH:MM:SS) without Z suffix
+- When the user mentions times like "3pm", interpret that as ${tzInfo.timeZone} time and pass as-is to tools (e.g., "2025-06-20T15:00:00")
+- NEVER include Z suffix in tool calls - the system handles UTC conversion automatically
 - Display times naturally without explicitly mentioning the timezone unless there's ambiguity or the user asks
-- The system automatically handles timezone conversion, so you can speak naturally about times
 
 TIME CONVERSION EXAMPLES:
 - Local 9:00 AM ${tzInfo.tzAbbr} = ${localToUTC("9:00 AM")} in UTC
 - Local 3:00 PM ${tzInfo.tzAbbr} = ${localToUTC("3:00 PM")} in UTC
 - Local 8:30 PM ${tzInfo.tzAbbr} = ${localToUTC("8:30 PM")} in UTC
-- UTC ${new Date().toISOString()} = ${utcToLocal(new Date().toISOString())} ${tzInfo.tzAbbr}
+- UTC ${new Date().toISOString()} = ${utcToLocal(new Date().toISOString(), '12h', req.userTimeZone)} ${tzInfo.tzAbbr}
 
 GUIDELINES:
 1. You automatically have context of today and tomorrow's events (shown above) - use this for quick reference
 2. For events on other days, use the get_calendar_events tool to retrieve them
 3. Always check existing events before scheduling to avoid conflicts
-4. When creating events, use ISO format times (YYYY-MM-DDTHH:MM:SS)
+4. When creating events, use LOCAL TIME format (YYYY-MM-DDTHH:MM:SS) WITHOUT Z suffix
 5. Suggest alternative times if conflicts exist
 6. Be conversational and helpful
 7. If moving events to resolve conflicts, explain the changes clearly
@@ -1115,97 +1330,43 @@ async function executeGetCalendarEvents(input, req) {
   try {
     const { start_date, end_date } = input;
     
-    console.log('🔍 executeGetCalendarEvents called with:', {
-      input,
-      userId: req.userId,
-      hasSupabase: !!req.supabase
-    });
-    
-        let events;
-    if (start_date && end_date) {
-      console.log('🔍 Getting events by date range:', start_date, 'to', end_date);
-      
-      const startDateObj = new Date(start_date);
-      let endDateObj = new Date(end_date);
-      
-      // If start and end are the same day, extend end to midnight of next day
-      if (start_date === end_date) {
-        endDateObj = new Date(startDateObj);
-        endDateObj.setDate(endDateObj.getDate() + 1);
-        console.log('🔍 Same day detected, extending end date to next day');
-      }
-      
-      console.log('🔍 Date objects:', startDateObj, 'to', endDateObj);
-      
-      // Try to get ALL events first to see if there are any in the database
-      const allEventsTest = await getAllEvents(req.userId, req.supabase);
-      console.log('🔍 Total events for user:', allEventsTest.length);
-      
-      events = await getEventsByDateRange(
-        startDateObj, 
-        endDateObj, 
-        req.userId, 
-        req.supabase
-      );
+    // Default to a 7-day range if no dates are provided
+    const startDate = start_date ? new Date(start_date) : new Date();
+    let endDate;
+    if (end_date) {
+      endDate = new Date(end_date);
+    } else if (start_date) {
+      endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 1); // 24-hour period if only start_date is given
     } else {
-      console.log('🔍 Getting current week events (default)');
-      // Get current week - Monday to Sunday
-      const now = new Date();
-      const startOfWeek = new Date(now);
-      const day = startOfWeek.getDay();
-      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Monday start
-      startOfWeek.setDate(diff);
-      startOfWeek.setHours(0, 0, 0, 0);
-      
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-      
-      console.log('🔍 Week range:', startOfWeek.toISOString(), 'to', endOfWeek.toISOString());
-      
-      events = await getEventsByDateRange(
-        startOfWeek,
-        endOfWeek,
-        req.userId,
-        req.supabase
-      );
-      console.log('🔍 Current week events returned:', events.length, 'events');
+      endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 7); // Default 7-day view
     }
     
-    console.log('🔍 Raw events returned:', events.length, 'events');
-    if (events.length > 0) {
-      console.log('🔍 First event:', events[0]);
+    // Ensure end date is after start date
+    if (endDate <= startDate) {
+      endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
     }
     
-    const formattedEvents = events.map(event => ({
-      id: event.id,
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      color: event.color
-    }));
+    console.log(`🔍 Fetching events from ${startDate.toISOString()} to ${endDate.toISOString()} for user ${req.userId}`);
     
-    // Limit events sent to Claude to prevent API issues
-    const maxEventsForAI = 50;
-    const eventsForAI = formattedEvents.slice(0, maxEventsForAI);
-    const wasLimited = formattedEvents.length > maxEventsForAI;
+    const events = await getEventsByDateRange(startDate, endDate, req.userId, req.supabase);
     
-    console.log('🔍 Returning formatted events:', eventsForAI.length, wasLimited ? `(limited from ${formattedEvents.length})` : '');
+    if (events.length === 0) {
+      return { success: true, message: "No events found in this date range." };
+    }
     
-    return {
-      success: true,
-      events: eventsForAI,
-      count: eventsForAI.length,
-      total_count: formattedEvents.length,
-      ...(wasLimited && { note: `Showing first ${maxEventsForAI} of ${formattedEvents.length} events` })
-    };
-  } catch (error) {
-    console.error('❌ Error in executeGetCalendarEvents:', error);
+    const eventsList = events.map(e => `[ID:${e.id}] "${e.title}" from ${e.start.toISOString()} to ${e.end.toISOString()}`).join('\n');
+    
     return { 
-      success: false, 
-      error: 'Failed to get calendar events',
-      details: error.message 
+      success: true, 
+      count: events.length,
+      events: eventsList
     };
+    
+  } catch (error) {
+    console.error('Error in executeGetCalendarEvents:', error);
+    return { success: false, error: 'Failed to retrieve calendar events.' };
   }
 }
 
@@ -1220,35 +1381,21 @@ async function executeCreateEvent(input, req) {
       };
     }
     
-    // Handle timezone properly - convert local time inputs to UTC
-    // If input already has timezone info, use it directly
-    // Otherwise, treat as local time and convert to UTC
-    const tzInfo = getUserTimezoneInfo();
-    
+    // Use the DST-aware conversion function for Claude's local time inputs
     let startDate, endDate;
-    if (start_time.includes('Z') || start_time.includes('+') || start_time.includes('-')) {
-      // Already has timezone info, use directly
-      startDate = new Date(start_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localStartDate = new Date(start_time);
-      startDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    try {
+      startDate = convertLocalTimeToUTC(start_time, req.userTimeZone);
+      endDate = convertLocalTimeToUTC(end_time, req.userTimeZone);
+    } catch (error) {
+      return { 
+        success: false,
+        error: 'Invalid date format: ' + error.message 
+      };
     }
     
-    if (end_time.includes('Z') || end_time.includes('+') || end_time.includes('-')) {
-      // Already has timezone info, use directly
-      endDate = new Date(end_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localEndDate = new Date(end_time);
-      endDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
-    }
     console.log('🔍 Input times:', start_time, 'to', end_time);
-    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
-    console.log('🔍 Parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
-    console.log('🔍 Local times:', utcToLocal(startDate.toISOString()), 'to', utcToLocal(endDate.toISOString()));
+    console.log('🔍 DST-aware parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
+    console.log('🔍 Will display as local:', utcToLocal(startDate.toISOString(), '12h', req.userTimeZone), 'to', utcToLocal(endDate.toISOString(), '12h', req.userTimeZone));
     
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return { 
@@ -1276,7 +1423,7 @@ async function executeCreateEvent(input, req) {
     return {
       success: true,
       event: newEvent,
-      message: `Created event "${title}" from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`
+      message: `Created event "${title}" from ${utcToLocal(startDate.toISOString(), '12h', req.userTimeZone)} to ${utcToLocal(endDate.toISOString(), '12h', req.userTimeZone)}`
     };
   } catch (error) {
     console.error('Error in executeCreateEvent:', error);
@@ -1299,35 +1446,20 @@ async function executeMoveEvent(input, req) {
       };
     }
     
-    // Handle timezone properly - convert local time inputs to UTC
-    // If input already has timezone info, use it directly
-    // Otherwise, treat as local time and convert to UTC
-    const tzInfo = getUserTimezoneInfo();
-    
+    // Use the DST-aware conversion function for Claude's local time inputs
     let newStartDate, newEndDate;
-    if (new_start_time.includes('Z') || new_start_time.includes('+') || new_start_time.includes('-')) {
-      // Already has timezone info, use directly
-      newStartDate = new Date(new_start_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localStartDate = new Date(new_start_time);
-      newStartDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
-    }
-    
-    if (new_end_time.includes('Z') || new_end_time.includes('+') || new_end_time.includes('-')) {
-      // Already has timezone info, use directly
-      newEndDate = new Date(new_end_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localEndDate = new Date(new_end_time);
-      newEndDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    try {
+      newStartDate = convertLocalTimeToUTC(new_start_time, req.userTimeZone);
+      newEndDate = convertLocalTimeToUTC(new_end_time, req.userTimeZone);
+    } catch (error) {
+      return { 
+        success: false,
+        error: 'Invalid date format: ' + error.message 
+      };
     }
     console.log('🔍 Move input times:', new_start_time, 'to', new_end_time);
-    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
-    console.log('🔍 Move parsed dates (UTC):', newStartDate.toISOString(), 'to', newEndDate.toISOString());
-    console.log('🔍 Local times:', utcToLocal(newStartDate.toISOString()), 'to', utcToLocal(newEndDate.toISOString()));
+    console.log('🔍 DST-aware parsed dates (UTC):', newStartDate.toISOString(), 'to', newEndDate.toISOString());
+    console.log('🔍 Will display as local:', utcToLocal(newStartDate.toISOString(), '12h', req.userTimeZone), 'to', utcToLocal(newEndDate.toISOString(), '12h', req.userTimeZone));
     
     if (isNaN(newStartDate.getTime()) || isNaN(newEndDate.getTime())) {
       return { 
@@ -1362,7 +1494,7 @@ async function executeMoveEvent(input, req) {
     return {
       success: true,
       event: updatedEvent,
-      message: `Moved "${updatedEvent.title}" to ${newStartDate.toLocaleString()} - ${newEndDate.toLocaleString()}`
+      message: `Moved "${updatedEvent.title}" to ${utcToLocal(newStartDate.toISOString(), '12h', req.userTimeZone)} - ${utcToLocal(newEndDate.toISOString(), '12h', req.userTimeZone)}`
     };
   } catch (error) {
     console.error('Error in executeMoveEvent:', error);
@@ -1385,35 +1517,20 @@ async function executeCheckTimeConflicts(input, req) {
       };
     }
     
-    // Handle timezone properly - convert local time inputs to UTC
-    // If input already has timezone info, use it directly
-    // Otherwise, treat as local time and convert to UTC
-    const tzInfo = getUserTimezoneInfo();
-    
+    // Use the DST-aware conversion function for Claude's local time inputs
     let startDate, endDate;
-    if (start_time.includes('Z') || start_time.includes('+') || start_time.includes('-')) {
-      // Already has timezone info, use directly
-      startDate = new Date(start_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localStartDate = new Date(start_time);
-      startDate = new Date(localStartDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
-    }
-    
-    if (end_time.includes('Z') || end_time.includes('+') || end_time.includes('-')) {
-      // Already has timezone info, use directly
-      endDate = new Date(end_time);
-    } else {
-      // No timezone info, treat as local time and convert to UTC
-      // Parse as local time then adjust for timezone offset
-      const localEndDate = new Date(end_time);
-      endDate = new Date(localEndDate.getTime() - (tzInfo.offsetMinutes * 60 * 1000));
+    try {
+      startDate = convertLocalTimeToUTC(start_time, req.userTimeZone);
+      endDate = convertLocalTimeToUTC(end_time, req.userTimeZone);
+    } catch (error) {
+      return { 
+        success: false,
+        error: 'Invalid date format: ' + error.message 
+      };
     }
     console.log('🔍 Conflict check input times:', start_time, 'to', end_time);
-    console.log('🔍 User timezone:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
-    console.log('🔍 Parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
-    console.log('🔍 Local times:', utcToLocal(startDate.toISOString()), 'to', utcToLocal(endDate.toISOString()));
+    console.log('🔍 DST-aware parsed dates (UTC):', startDate.toISOString(), 'to', endDate.toISOString());
+    console.log('🔍 Will display as local:', utcToLocal(startDate.toISOString(), '12h', req.userTimeZone), 'to', utcToLocal(endDate.toISOString(), '12h', req.userTimeZone));
     
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return { 
@@ -1477,7 +1594,7 @@ async function executeSearchEvents(input, req) {
     
     if (start_date || end_date) {
       timeframe = {};
-      const tzInfo = getUserTimezoneInfo();
+      const tzInfo = getUserTimezoneInfo(req.userTimeZone);
       console.log('🔍 User timezone for search:', tzInfo.timeZone, tzInfo.offsetFormatted, tzInfo.isDST ? '(DST active)' : '');
       
       if (start_date) {
@@ -1493,7 +1610,7 @@ async function executeSearchEvents(input, req) {
           };
         }
         console.log('🔍 Search start date (UTC):', startDate.toISOString());
-        console.log('🔍 Search start date (local):', utcToLocal(startDate.toISOString()));
+        console.log('🔍 Search start date (local):', utcToLocal(startDate.toISOString(), '12h', req.userTimeZone));
         timeframe.start = startDate;
       } else {
         // If no start date, use a date far in the past
@@ -1522,7 +1639,7 @@ async function executeSearchEvents(input, req) {
         }
         
         console.log('🔍 Search end date (UTC):', endDate.toISOString());
-        console.log('🔍 Search end date (local):', utcToLocal(endDate.toISOString()));
+        console.log('🔍 Search end date (local):', utcToLocal(endDate.toISOString(), '12h', req.userTimeZone));
         timeframe.end = endDate;
       } else {
         // If no end date, use a date far in the future
@@ -1685,7 +1802,7 @@ app.post('/api/events/import', authenticateUser, upload.single('icalFile'), asyn
             title: expandedEvent.title || expandedEvent.summary,
             start: expandedEvent.start,
             end: expandedEvent.end,
-            color: '#10b981' // Use green color for imported events
+            color: '#4A7C2A' // Use dark green color for imported events
           };
           
           console.log(`Successfully processed event:`, eventToImport);
@@ -1893,10 +2010,10 @@ app.delete('/api/calendar-subscriptions/:id', authenticateUser, async (req, res)
 });
 
 // Sync specific calendar subscription
-app.post('/api/calendar-subscriptions/:id/sync', async (req, res) => {
+app.post('/api/calendar-subscriptions/:id/sync', authenticateUser, async (req, res) => {
   try {
     const subscriptionId = parseInt(req.params.id);
-    const subscriptions = await getCalendarSubscriptions();
+    const subscriptions = await getCalendarSubscriptions(req.userId, req.supabase);
     const subscription = subscriptions.find(sub => sub.id === subscriptionId);
     
     if (!subscription) {
@@ -1976,10 +2093,10 @@ app.post('/api/calendar-subscriptions/:id/sync', async (req, res) => {
   }
 });
 
-// Sync all calendar subscriptions
-app.post('/api/calendar-subscriptions/sync-all', async (req, res) => {
+// Sync all calendar subscriptions  
+app.post('/api/calendar-subscriptions/sync-all', authenticateUser, async (req, res) => {
   try {
-    const subscriptions = await getCalendarSubscriptions();
+    const subscriptions = await getCalendarSubscriptions(req.userId, req.supabase);
     const results = [];
 
     for (const subscription of subscriptions) {
@@ -2086,99 +2203,103 @@ let syncInterval;
 const startAutoSync = () => {
   if (syncInterval) clearInterval(syncInterval);
   
+  // TEMPORARILY DISABLED: Auto-sync was causing cross-user calendar contamination
+  // Need to fix user context issues before re-enabling
+  console.log('⚠️ Auto-sync temporarily disabled to prevent calendar leakage');
+  return;
+  
   syncInterval = setInterval(async () => {
     try {
       console.log('🔄 Auto-sync starting...');
       
-      // Direct function call instead of HTTP request to avoid network issues
-      const subscriptions = await getCalendarSubscriptions();
-      let successful = 0;
-      let totalEvents = 0;
+      // Fetch all subscriptions from all users
+      const allSubscriptions = await getCalendarSubscriptions();
       
-      for (const subscription of subscriptions) {
-        if (!subscription.sync_enabled) continue;
-        
-        try {
-          console.log(`🔄 Auto-syncing: ${subscription.name}`);
+      // Group subscriptions by user to process them securely
+      const subscriptionsByUser = allSubscriptions.reduce((acc, sub) => {
+        if (!sub.user_id) return acc;
+        if (!acc[sub.user_id]) acc[sub.user_id] = [];
+        acc[sub.user_id].push(sub);
+        return acc;
+      }, {});
+
+      console.log(`Found subscriptions for ${Object.keys(subscriptionsByUser).length} users.`);
+
+      // Process each user's subscriptions independently
+      for (const userId in subscriptionsByUser) {
+        const userSubscriptions = subscriptionsByUser[userId];
+        console.log(`Processing ${userSubscriptions.length} subscriptions for user ${userId}...`);
+
+        for (const subscription of userSubscriptions) {
+          if (!subscription.sync_enabled) continue;
           
-          // Convert webcal:// to https:// for fetching
-          const fetchUrl = subscription.url ? subscription.url.replace(/^webcal:\/\//, 'https://') : null;
-          
-          if (!fetchUrl) {
-            console.log(`⚠️ Skipping subscription with invalid URL: ${subscription.name}`);
-            continue;
-          }
-          
-          const response = await fetch(fetchUrl, { 
-            timeout: 10000,  // 10 second timeout
-            signal: AbortSignal.timeout(10000) 
-          });
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          
-          const icalDataRaw = await response.text();
-          const icalData = unfoldICSLines(icalDataRaw);
-          const parsedEvents = ical.parseICS(icalData);
-          
-          const currentYear = new Date().getFullYear();
-          const janFirstThisYear = new Date(currentYear, 0, 1);
-          
-          const eventsData = [];
-          
-          for (const event of Object.values(parsedEvents)) {
-            if (event.type !== 'VEVENT') continue;
+          try {
+            console.log(`🔄 Auto-syncing: ${subscription.name} for user ${userId}`);
             
-            const start = new Date(event.start);
-            let end = event.end ? new Date(event.end) : null;
-            if (!end || isNaN(end.getTime())) {
-              end = new Date(start.getTime() + 60 * 60 * 1000);
-            }
-            if (start >= end) {
-              end = new Date(start.getTime() + 60 * 60 * 1000);
+            // Convert webcal:// to https:// for fetching
+            const fetchUrl = subscription.url ? subscription.url.replace(/^webcal:\/\//, 'https://') : null;
+            
+            if (!fetchUrl) {
+              console.log(`⚠️ Skipping subscription with invalid URL: ${subscription.name}`);
+              continue;
             }
             
-            // Normalize the event for processing
-            const normalizedEvent = {
-              ...event,
-              start,
-              end,
-              summary: event.summary || 'Untitled Event'
-            };
+            const response = await fetch(fetchUrl, { 
+              timeout: 10000,
+              signal: AbortSignal.timeout(10000) 
+            });
             
-            // Handle recurring events - expand into individual instances
-            const expandedEvents = expandRecurringEvent(normalizedEvent);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
-            for (const expandedEvent of expandedEvents) {
-              // Skip events before current year
-              if (expandedEvent.start < janFirstThisYear) continue;
+            const icalDataRaw = await response.text();
+            const icalData = unfoldICSLines(icalDataRaw);
+            const parsedEvents = ical.parseICS(icalData);
+            
+            const currentYear = new Date().getFullYear();
+            const janFirstThisYear = new Date(currentYear, 0, 1);
+            
+            const eventsData = [];
+            
+            for (const event of Object.values(parsedEvents)) {
+              if (event.type !== 'VEVENT') continue;
               
-              eventsData.push({
-                title: expandedEvent.title || expandedEvent.summary,
-                start: expandedEvent.start,
-                end: expandedEvent.end,
-                color: subscription.color,
-                uid: expandedEvent.uid || event.uid
-              });
+              const start = new Date(event.start);
+              let end = event.end ? new Date(event.end) : null;
+              if (!end || isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
+              if (start >= end) end = new Date(start.getTime() + 60 * 60 * 1000);
+              
+              const normalizedEvent = { ...event, start, end, summary: event.summary || 'Untitled Event' };
+              const expandedEvents = expandRecurringEvent(normalizedEvent);
+              
+              for (const expandedEvent of expandedEvents) {
+                if (expandedEvent.start < janFirstThisYear) continue;
+                
+                eventsData.push({
+                  title: expandedEvent.title || expandedEvent.summary,
+                  start: expandedEvent.start,
+                  end: expandedEvent.end,
+                  color: subscription.color,
+                  uid: expandedEvent.uid || event.uid
+                });
+              }
             }
+            
+            // CORRECTLY pass the userId for this user's subscription batch
+            const result = await importEventsFromSubscription(subscription.id, eventsData, userId, null);
+            await updateCalendarSync(subscription.id);
+            
+            console.log(`✅ Sync complete for ${subscription.name}: ${result.successful}/${result.total} events`);
+            
+          } catch (syncError) {
+            console.error(`⚠️ Sync failed for ${subscription.name} (User: ${userId}):`, syncError.message);
           }
-          
-          const result = await importEventsFromSubscription(subscription.id, eventsData, req.userId, req.supabase);
-          await updateCalendarSync(subscription.id);
-          
-          successful++;
-          totalEvents += result.successful;
-          
-        } catch (syncError) {
-          console.error(`⚠️ Sync failed for ${subscription.name}:`, syncError.message);
         }
       }
       
-      console.log(`✅ Auto-sync complete: Synced ${successful}/${subscriptions.length} calendars (${totalEvents} events)`);
+      console.log(`✅ Auto-sync cycle complete.`);
       
     } catch (error) {
-      console.error('❌ Auto-sync error:', error.message);
+      console.error('❌ Auto-sync master error:', error.message);
     }
   }, 30 * 60 * 1000); // 30 minutes
   
@@ -2210,7 +2331,7 @@ app.post('/api/events/:id/invite', async (req, res) => {
     }
     
     // Get the event from database
-    const allEvents = await getAllEvents();
+    const allEvents = await getAllEvents(req.userId, req.supabase);
     const event = allEvents.find(e => e.id === parseInt(id));
     
     if (!event) {
@@ -2320,7 +2441,7 @@ app.post('/api/events/:id/invite', async (req, res) => {
   // AI Calendar Query endpoint
 app.post('/api/calendar/query', authenticateUser, async (req, res) => {
   try {
-    const { query, chatHistory = [] } = req.body;
+    const { query, chatHistory = [], userTimeZone } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
@@ -2330,21 +2451,27 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     const currentTime = new Date();
     const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
     const next7Days = new Date(today.getTime() + (7 * 24 * 60 * 60 * 1000));
+    const dayAfterTomorrow = new Date(today.getTime() + (2 * 24 * 60 * 60 * 1000));
     
     const recentEvents = await getEventsByDateRange(today, next7Days, req.userId, req.supabase);
     const todayEvents = await getEventsForPeriod('today', req.userId, req.supabase);
     const tomorrowEvents = await getEventsForPeriod('tomorrow', req.userId, req.supabase);
-    const upcomingEvents = recentEvents.slice(0, 20); // Limit to 20 most recent
+    
+    // Get upcoming events (day after tomorrow onwards) to avoid duplicates with today/tomorrow
+    const upcomingEventsRange = await getEventsByDateRange(dayAfterTomorrow, next7Days, req.userId, req.supabase);
+    const upcomingEvents = upcomingEventsRange.slice(0, 10); // Limit to 10 to keep context manageable
+    
     const stats = await getCalendarStats('this_week', req.userId, req.supabase);
     
     // Create calendar context for Claude
     const now = currentTime;
+    const actualTimezone = userTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     const calendarContext = {
       currentTime: now.toISOString(),
       currentDate: now.toLocaleDateString(),
       currentDay: now.toLocaleDateString('en-US', { weekday: 'long' }),
       currentLocalTime: now.toLocaleString(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezone: actualTimezone,
       totalEvents: recentEvents.length,
       upcomingEvents: upcomingEvents.slice(0, 10),
       todayEvents,
@@ -2368,8 +2495,8 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     console.log('🔍 DEBUG: Events being sent to Claude:');
     console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('📅 Tomorrow events:', tomorrowEvents.length, tomorrowEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
-    console.log('📅 Recent events:', recentEvents.length, recentEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
-    console.log('🔍 DEBUG: Sending Claude API request with body:', JSON.stringify(requestBody, null, 2));
+    console.log('📅 Upcoming events (day after tomorrow+):', upcomingEvents.length, upcomingEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
+    console.log('🔍 DEBUG: Total events in 7-day range:', recentEvents.length);
     console.log('🔍 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
     console.log('🔍 DEBUG: API Key length:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.length : 0);
 
@@ -2685,7 +2812,7 @@ function createCalendarPrompt(query, context) {
     ? `
 CHAT HISTORY (Recent conversation context):
 ${context.chatHistory.slice(-10).map((msg, index) => {
-  const timestamp = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const timestamp = utcToLocal(msg.timestamp, '24h', context.timezone);
   return `[${timestamp}] ${msg.sender === 'user' ? 'User' : 'Tilly'}: ${msg.text}`;
 }).join('\n')}
 ` 
@@ -2701,23 +2828,23 @@ CURRENT CONTEXT:
 
 TODAY'S EVENTS (${context.todayEvents.length}):
 ${context.todayEvents.map(e => {
-  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const startTime = utcToLocal(e.start, '24h', context.timezone);
+  const endTime = utcToLocal(e.end, '24h', context.timezone);
   return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No events today'}
 
 TOMORROW'S EVENTS (${context.tomorrowEvents.length}):
 ${context.tomorrowEvents.map(e => {
-  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const startTime = utcToLocal(e.start, '24h', context.timezone);
+  const endTime = utcToLocal(e.end, '24h', context.timezone);
   return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No events tomorrow'}
 
 UPCOMING EVENTS (${context.upcomingEvents.length}):
 ${context.upcomingEvents.map(e => {
   const date = new Date(e.start).toLocaleDateString();
-  const startTime = new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  const endTime = new Date(e.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  const startTime = utcToLocal(e.start, '24h', context.timezone);
+  const endTime = utcToLocal(e.end, '24h', context.timezone);
   return `- [ID:${e.id}] ${e.title} on ${date} from ${startTime} to ${endTime}`;
 }).join('\n') || '- No upcoming events'}
 
@@ -2970,7 +3097,12 @@ function createFallbackResponse(query, context) {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Proxy server is running' });
+  res.json({ 
+    status: 'OK', 
+    message: 'Proxy server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 // Graceful shutdown
@@ -2999,10 +3131,37 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Tilly Calendar server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 API endpoint: http://localhost:${PORT}/api/claude`);
-  console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
-  console.log(`❤️  Health check: http://localhost:${PORT}/health`);
+console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🔗 API endpoint: http://localhost:${PORT}/api/claude`);
+console.log(`📅 Events API: http://localhost:${PORT}/api/events`);
+console.log(`❤️  Health check: http://localhost:${PORT}/health`);
+
+// Timezone environment debugging
+console.log('\n🌍 === SERVER TIMEZONE ENVIRONMENT ===');
+console.log('🌍 Node.js version:', process.version);
+console.log('🌍 Process timezone (TZ):', process.env.TZ || 'not set');
+console.log('🌍 NODE_ICU_DATA:', process.env.NODE_ICU_DATA || 'not set');
+console.log('🌍 System locale:', Intl.DateTimeFormat().resolvedOptions().locale);
+console.log('🌍 Detected system timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+// Test ICU availability
+try {
+  const icuTest = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/London' });
+  const testDate = new Date('2024-07-15T14:00:00Z');
+  const londonTime = icuTest.format(testDate);
+  console.log('🌍 ICU test PASSED - Europe/London format works:', londonTime);
+} catch (icuError) {
+  console.log('🌍 ICU test FAILED:', icuError.message);
+}
+
+// Test current timezone info
+try {
+  const tzInfo = getUserTimezoneInfo();
+  console.log('🌍 Server startup timezone check completed');
+} catch (tzError) {
+  console.log('🌍 Server startup timezone check FAILED:', tzError.message);
+}
+console.log('🌍 === END SERVER TIMEZONE ENVIRONMENT ===\n');
   
   if (process.env.NODE_ENV === 'production') {
     console.log(`🌐 Serving static files from dist/`);

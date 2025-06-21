@@ -47,7 +47,10 @@ const CalendarAI = () => {
       const response = await fetch('/api/calendar/query', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ query: inputValue }),
+        body: JSON.stringify({ 
+          query: inputValue,
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        }),
       });
 
       if (!response.ok) {

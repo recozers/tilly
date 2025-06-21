@@ -67,9 +67,10 @@ export const createEvent = async (eventData) => {
       headers,
       body: JSON.stringify({
         title: eventData.title,
-        start: eventData.start.toISOString(),
-        end: eventData.end.toISOString(),
-        color: eventData.color || '#4A7C2A'
+        start: eventData.start instanceof Date ? eventData.start.getTime() : eventData.start,
+        end: eventData.end instanceof Date ? eventData.end.getTime() : eventData.end,
+        color: eventData.color || '#4A7C2A',
+        userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
       }),
     });
     
@@ -94,14 +95,14 @@ export const updateEvent = async (id, eventData) => {
     
     if (eventData.start !== undefined) {
       updatePayload.start = eventData.start instanceof Date 
-        ? eventData.start.toISOString() 
+        ? eventData.start.getTime() 
         : eventData.start;
       console.log('🔍 DEBUG: processed start:', updatePayload.start, 'from:', eventData.start);
     }
     
     if (eventData.end !== undefined) {
       updatePayload.end = eventData.end instanceof Date 
-        ? eventData.end.toISOString() 
+        ? eventData.end.getTime() 
         : eventData.end;
       console.log('🔍 DEBUG: processed end:', updatePayload.end, 'from:', eventData.end);
     }
@@ -109,6 +110,8 @@ export const updateEvent = async (id, eventData) => {
     if (eventData.color !== undefined) {
       updatePayload.color = eventData.color;
     }
+
+    updatePayload.userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     console.log('🔍 DEBUG: final updatePayload:', updatePayload);
 

@@ -1,115 +1,258 @@
 # Tilly - AI-Powered Calendar Assistant
 
-A modern React calendar application with AI-powered natural language event scheduling using Claude (Anthropic API), iCal import/export, and email calendar invitations.
-
-## 📧 Email Configuration (For Calendar Invitations)
-
-To enable calendar invitations, create a `.env` file in the root directory with:
-
-```env
-# Anthropic API Key (required for AI features)
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-
-# Email Configuration (required for calendar invitations)
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
-
-# For Gmail:
-# 1. Enable 2-factor authentication
-# 2. Generate an "App Password" (not your regular password)
-# 3. Use the app password as EMAIL_PASS
-```
-
-**Note**: For production, consider using dedicated email services like SendGrid, AWS SES, or Mailgun.
+A modern React calendar application with AI-powered natural language event scheduling, secure multi-user authentication, and comprehensive testing infrastructure.
 
 ## Screenshot
 
-<img src='screen-shots/demo.png' alt='screenshot of the demo running' height='400' width='800' />
+<img src='screenshots/Screenshot 2025-06-17 at 12.36.02.png' alt='Tilly Calendar Application' height='400' width='800' />
 
-## Features
+## ✨ Features
 
-- **AI Chat Integration**: Natural language event creation using Claude API
-- **Drag & Drop**: Move events between time slots and days
+### Core Calendar Features
+- **AI Chat Integration**: Natural language event creation using Claude API with timezone-aware processing
+- **Drag & Drop**: Move events between time slots and days with visual feedback
 - **Event Resizing**: Drag event edges to change duration
 - **Inline Editing**: Click event titles to edit in place
-- **Professional UI**: Clean, modern calendar interface
-- **Real-time Updates**: Instant visual feedback for all interactions
+- **Multi-User Support**: Secure user authentication and data isolation
+- **Real-time Updates**: Instant visual feedback for all calendar interactions
 
-## Tech Stack
+### AI Assistant "Tilly"
+- **Tool-Based AI**: Advanced Claude integration with custom tools for calendar operations
+- **Conflict Detection**: Automatic scheduling conflict resolution
+- **Natural Language**: Understands complex scheduling requests
+- **Timezone Aware**: Handles DST and timezone conversions accurately
+- **Multi-Round Conversations**: Supports follow-up questions and clarifications
 
-- React 17 with hooks
-- TypeScript
-- [Vite](https://vitejs.dev/) for development and building
-- Anthropic Claude API for AI chat
-- Custom calendar implementation (no external calendar libraries)
-- ESLint and Prettier
+### Data & Security
+- **Supabase Backend**: Secure PostgreSQL database with Row Level Security (RLS)
+- **User Authentication**: Email/password and OAuth provider support
+- **Data Isolation**: Users can only access their own calendar events
+- **Input Sanitization**: Protection against XSS and SQL injection
+- **Comprehensive Testing**: Mock and integration test suites
 
-## Setup
+### Import/Export
+- **iCal Support**: Import and export calendar events in standard format
+- **Email Invitations**: Send calendar invites via email with iCal attachments
+- **Calendar Subscriptions**: Subscribe to external iCal feeds
 
-1. Clone this repository
-2. Run `npm install` or `yarn` to install dependencies
-3. Create a `.env` file in the root directory:
-   ```
-   VITE_ANTHROPIC_API_KEY=your_anthropic_api_key_here
-   ANTHROPIC_API_KEY=your_anthropic_api_key_here
-   ```
-4. Get your API key from [Anthropic Console](https://console.anthropic.com/)
+## 🛠 Tech Stack
 
-## Running 
+- **Frontend**: React 18, Vite 5, Modern CSS
+- **Backend**: Node.js 22, Express.js 4
+- **Database**: Supabase (PostgreSQL with real-time features)
+- **Authentication**: Supabase Auth with Row Level Security
+- **AI**: Anthropic Claude API with custom tool integration
+- **Testing**: Jest with comprehensive mock and integration tests
+- **Deployment**: AWS Elastic Beanstalk ready
 
-### Option 1: Full AI Functionality (Recommended)
-To run with real Anthropic API integration:
+## 🚀 Quick Start
 
+### Prerequisites
+- Node.js 22.x or higher
+- npm 8.0.0 or higher
+- Supabase account and project
+- Anthropic API key (for AI features)
+
+### Environment Setup
+
+1. Clone the repository:
+```bash
+git clone [repository-url]
+cd tilly
+npm install
+```
+
+2. Create a `.env` file in the root directory:
+```env
+# Supabase Configuration (Required)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# Anthropic API (Required for AI features)
+ANTHROPIC_API_KEY=sk-ant-your-api-key
+
+# Frontend Environment Variables
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+
+# Email Configuration (Optional - for calendar invitations)
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+```
+
+3. Set up your Supabase database:
+   - Create a new Supabase project
+   - The application will automatically create required tables
+   - Ensure Row Level Security (RLS) is enabled
+
+### Running the Application
+
+#### Full Stack Development (Recommended)
 ```bash
 # Run both frontend and backend together
 npm run dev:full
+```
 
-# Or run them separately in different terminals:
-# Terminal 1: Backend proxy server
+This starts:
+- Frontend dev server on `http://localhost:3000`
+- Backend API server on `http://localhost:8080`
+
+#### Separate Services
+```bash
+# Terminal 1: Backend server
 npm run server
 
-# Terminal 2: Frontend development server  
+# Terminal 2: Frontend development server
 npm run dev
 ```
 
-### Option 2: Local Parser Only
-To run with just the enhanced local parser:
-
+#### Frontend Only
 ```bash
+# Frontend only (limited AI functionality)
 npm run dev
 ```
 
-The app will be available at `http://localhost:3000`
-The proxy server runs on `http://localhost:3001`
+## 🧪 Testing
 
-## AI Chat Usage
+Tilly includes comprehensive testing infrastructure:
 
-The AI assistant "Tilly" can understand natural language requests like:
-- "Schedule a meeting tomorrow at 2pm"
-- "Book dentist appointment Friday 3pm"
-- "Lunch with Sarah next week"
-- "Gym session Monday 6am"
-- "Coffee meeting today at 10am"
-- "Doctor appointment Wednesday 3:30pm"
+### Test Commands
+```bash
+# Run all mock tests (fast, no external dependencies)
+npm test
 
-The AI will parse your request and offer to add the event to your calendar.
+# Run integration tests (requires real Supabase connection)
+npm run test:real
 
-## Current Status
+# Run with coverage reporting
+npm run test:coverage
 
-**✅ Full AI Integration Available!** 
+# Watch mode for development
+npm run test:watch
+```
 
-The app now supports real Anthropic Claude API integration through a local proxy server that solves CORS restrictions. You can choose between:
+### Test Coverage
+- **Mock Tests**: 36 tests covering business logic, security, and utilities
+- **Integration Tests**: Real database and API endpoint testing
+- **Security Tests**: Input sanitization, authentication, and authorization
+- **Timezone Tests**: DST handling and timezone conversion validation
 
-1. **Full AI Mode**: Real Claude API with advanced natural language understanding
-2. **Local Parser Mode**: Enhanced pattern matching that works offline
+## 🤖 AI Usage Examples
 
-When running in full AI mode, Claude can understand complex requests like:
-- "Schedule a team meeting next Tuesday from 2-4pm to discuss the quarterly review"
-- "Book a dentist appointment for next Friday afternoon, preferably around 3pm"
-- "Set up a coffee chat with Sarah sometime next week"
+Tilly understands natural language requests:
 
-The local parser provides intelligent scheduling without requiring an API key and handles most common scenarios.
+```
+"Schedule a meeting tomorrow at 2pm"
+"Book dentist appointment Friday 3pm for 1 hour"
+"Lunch with Sarah next Tuesday from 12-1pm"
+"Move my 3pm meeting to 4pm today"
+"Check if I'm free Wednesday at 10am"
+"Cancel my gym session on Monday"
+```
 
-## Note
+The AI assistant:
+- ✅ Checks for scheduling conflicts
+- ✅ Suggests alternative times when conflicts exist
+- ✅ Handles timezone conversions automatically
+- ✅ Supports follow-up questions and modifications
+- ✅ Provides conversational, helpful responses
 
-The enhanced local parser provides intelligent scheduling without requiring an API key, making it work out of the box for most common scheduling scenarios.
+## 🔧 Environment Variables
+
+### Required
+- `SUPABASE_URL` - Your Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anonymous key
+- `VITE_SUPABASE_URL` - Frontend Supabase URL
+- `VITE_SUPABASE_ANON_KEY` - Frontend Supabase key
+- `ANTHROPIC_API_KEY` - Anthropic Claude API key
+
+### Optional
+- `SUPABASE_SERVICE_ROLE_KEY` - For advanced database operations
+- `EMAIL_USER` - SMTP email for calendar invitations
+- `EMAIL_PASS` - SMTP password (use app passwords for Gmail)
+- `NODE_ENV` - Set to 'production' for production builds
+- `PORT` - Server port (default: 8080)
+
+## 📦 Deployment
+
+### AWS Elastic Beanstalk
+
+1. Build the deployment package:
+```bash
+./create-deployment-zip.sh
+```
+
+2. Upload `tilly-deployment.zip` to Elastic Beanstalk
+
+3. Set environment variables in the EB console
+
+4. Deploy and access your application
+
+The deployment script automatically:
+- ✅ Builds the frontend (`npm run build`)
+- ✅ Packages all necessary files
+- ✅ Includes production configuration
+- ✅ Sets up proper Node.js environment
+
+## 🔒 Security Features
+
+- **Row Level Security**: Database-level access control
+- **User Isolation**: Users can only access their own data
+- **Input Sanitization**: Protection against XSS and injection attacks
+- **Authentication Middleware**: Secure API endpoint protection
+- **Environment Variable Protection**: Sensitive data properly configured
+- **CORS Configuration**: Proper cross-origin request handling
+
+## 🏗 Project Structure
+
+```
+tilly/
+├── src/                          # Frontend React application
+│   ├── components/              # React components
+│   ├── contexts/               # React contexts (Auth)
+│   ├── hooks/                  # Custom React hooks
+│   └── lib/                    # Supabase client configuration
+├── tests/                       # Comprehensive test suites
+│   ├── real-*.test.js          # Integration tests
+│   └── *.test.js               # Mock/unit tests
+├── server.js                    # Express.js backend server
+├── supabase.js                 # Database operations
+├── package.json                # Dependencies and scripts
+└── create-deployment-zip.sh    # Deployment packaging script
+```
+
+## 📄 API Documentation
+
+### Authentication Required Endpoints
+- `GET /api/events` - Get user's calendar events
+- `POST /api/events` - Create new event
+- `PUT /api/events/:id` - Update existing event
+- `DELETE /api/events/:id` - Delete event
+- `POST /api/ai/chat` - AI chat with calendar tools
+- `POST /api/tools/*` - Calendar tool endpoints
+
+### Public Endpoints
+- `GET /health` - Health check
+- `POST /api/auth/*` - Authentication endpoints
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Run the test suite: `npm test && npm run test:real`
+4. Make your changes
+5. Ensure all tests pass
+6. Submit a pull request
+
+## 📝 License
+
+Private project - All rights reserved.
+
+## 🆘 Support
+
+For issues and support:
+1. Check the test results: `npm run test:coverage`
+2. Review server logs for error details
+3. Verify environment variables are properly set
+4. Ensure Supabase project is configured correctly

@@ -302,7 +302,49 @@ const authenticateUser = async (req, res, next) => {
     
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     
-    // Create authenticated Supabase client with user's token
+    // Handle test tokens or bypass auth for testing
+    if ((process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') && 
+        (token.includes('test-signature') || token === 'bypass-auth-for-testing')) {
+      try {
+        let userId;
+        
+        if (token === 'bypass-auth-for-testing') {
+          // Simple bypass - use a default test user ID
+          userId = '1c30d652-bd04-47f3-8673-3e72cc6e8867';
+        } else {
+          // Decode test JWT payload
+          const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+          userId = payload.sub;
+        }
+        
+        // Create mock user object for testing
+        const mockUser = {
+          id: userId,
+          email: `${userId}@test.com`,
+          role: 'authenticated'
+        };
+        
+        // Create mock Supabase client that uses service role for testing
+        const { createClient } = require('@supabase/supabase-js');
+        const supabase = createClient(
+          process.env.SUPABASE_URL,
+          process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+        );
+        
+        req.user = mockUser;
+        req.userId = mockUser.id;
+        req.supabase = supabase;
+        
+        console.log(`🧪 Test auth: User ${mockUser.id} authenticated`);
+        next();
+        return;
+      } catch (testError) {
+        console.error('Test token validation failed:', testError);
+        return res.status(401).json({ error: 'Invalid test token' });
+      }
+    }
+    
+    // Regular Supabase authentication for production
     const { createClient } = require('@supabase/supabase-js');
     const supabase = createClient(
       process.env.SUPABASE_URL,
@@ -1994,6 +2036,32 @@ app.get('/api/calendar-subscriptions', authenticateUser, async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching subscriptions:', error);
     res.status(500).json({ error: 'Failed to fetch calendar subscriptions' });
+  }
+});
+
+// Create new calendar subscription
+app.post('/api/calendar-subscriptions', authenticateUser, async (req, res) => {
+  try {
+    const { name, url, color } = req.body;
+    
+    if (!name || !url) {
+      return res.status(400).json({ error: 'Name and URL are required' });
+    }
+    
+    const subscriptionData = {
+      name,
+      url,
+      color: color || '#4A7C2A',
+      sync_enabled: true
+    };
+    
+    const newSubscription = await addCalendarSubscription(subscriptionData, req.userId, req.supabase);
+    
+    console.log('Created new calendar subscription:', newSubscription);
+    res.status(201).json(newSubscription);
+  } catch (error) {
+    console.error('❌ Error creating subscription:', error);
+    res.status(500).json({ error: 'Failed to create calendar subscription' });
   }
 });
 

@@ -1,5 +1,5 @@
 // Integration Tests for External Services
-const fetch = require('node-fetch');
+// Using built-in fetch from Node.js 18+
 
 describe('External Service Integration', () => {
   describe('Supabase Connection', () => {

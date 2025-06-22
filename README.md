@@ -6,7 +6,7 @@ A modern React calendar application with AI-powered natural language event sched
 
 <img src='screenshots/Screenshot 2025-06-17 at 12.36.02.png' alt='Tilly Calendar Application' height='400' width='800' />
 
-## ✨ Features
+## Features
 
 ### Core Calendar Features
 - **AI Chat Integration**: Natural language event creation using Claude API with timezone-aware processing
@@ -35,7 +35,7 @@ A modern React calendar application with AI-powered natural language event sched
 - **Email Invitations**: Send calendar invites via email with iCal attachments
 - **Calendar Subscriptions**: Subscribe to external iCal feeds
 
-## 🛠 Tech Stack
+## Technology Stack
 
 - **Frontend**: React 18, Vite 5, Modern CSS
 - **Backend**: Node.js 22, Express.js 4
@@ -45,7 +45,7 @@ A modern React calendar application with AI-powered natural language event sched
 - **Testing**: Jest with comprehensive mock and integration tests
 - **Deployment**: AWS Elastic Beanstalk ready
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Node.js 22.x or higher
@@ -113,7 +113,7 @@ npm run dev
 npm run dev
 ```
 
-## 🧪 Testing
+## Testing
 
 Tilly includes comprehensive testing infrastructure:
 
@@ -138,7 +138,7 @@ npm run test:watch
 - **Security Tests**: Input sanitization, authentication, and authorization
 - **Timezone Tests**: DST handling and timezone conversion validation
 
-## 🤖 AI Usage Examples
+## AI Usage Examples
 
 Tilly understands natural language requests:
 
@@ -152,13 +152,13 @@ Tilly understands natural language requests:
 ```
 
 The AI assistant:
-- ✅ Checks for scheduling conflicts
-- ✅ Suggests alternative times when conflicts exist
-- ✅ Handles timezone conversions automatically
-- ✅ Supports follow-up questions and modifications
-- ✅ Provides conversational, helpful responses
+- Checks for scheduling conflicts
+- Suggests alternative times when conflicts exist
+- Handles timezone conversions automatically
+- Supports follow-up questions and modifications
+- Provides conversational, helpful responses
 
-## 🔧 Environment Variables
+## Environment Variables
 
 ### Required
 - `SUPABASE_URL` - Your Supabase project URL
@@ -174,7 +174,7 @@ The AI assistant:
 - `NODE_ENV` - Set to 'production' for production builds
 - `PORT` - Server port (default: 8080)
 
-## 📦 Deployment
+## Deployment
 
 ### AWS Elastic Beanstalk
 
@@ -190,12 +190,12 @@ The AI assistant:
 4. Deploy and access your application
 
 The deployment script automatically:
-- ✅ Builds the frontend (`npm run build`)
-- ✅ Packages all necessary files
-- ✅ Includes production configuration
-- ✅ Sets up proper Node.js environment
+- Builds the frontend (`npm run build`)
+- Packages all necessary files
+- Includes production configuration
+- Sets up proper Node.js environment
 
-## 🔒 Security Features
+## Security Features
 
 - **Row Level Security**: Database-level access control
 - **User Isolation**: Users can only access their own data
@@ -204,7 +204,7 @@ The deployment script automatically:
 - **Environment Variable Protection**: Sensitive data properly configured
 - **CORS Configuration**: Proper cross-origin request handling
 
-## 🏗 Project Structure
+## Project Structure
 
 ```
 tilly/
@@ -222,7 +222,7 @@ tilly/
 └── create-deployment-zip.sh    # Deployment packaging script
 ```
 
-## 📄 API Documentation
+## API Documentation
 
 ### Authentication Required Endpoints
 - `GET /api/events` - Get user's calendar events
@@ -236,7 +236,7 @@ tilly/
 - `GET /health` - Health check
 - `POST /api/auth/*` - Authentication endpoints
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -245,14 +245,6 @@ tilly/
 5. Ensure all tests pass
 6. Submit a pull request
 
-## 📝 License
+## License
 
 Private project - All rights reserved.
-
-## 🆘 Support
-
-For issues and support:
-1. Check the test results: `npm run test:coverage`
-2. Review server logs for error details
-3. Verify environment variables are properly set
-4. Ensure Supabase project is configured correctly

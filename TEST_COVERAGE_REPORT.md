@@ -176,7 +176,6 @@ The Tilly Calendar application test suite provides comprehensive coverage of cor
 
 ### Areas Requiring Manual Testing
 - User authentication flows
-- Payment processing
 - Email notifications
 - Calendar import/export
 

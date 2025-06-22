@@ -100,3 +100,4 @@ calendar.db
 
 .env.production
 tilly-development.zip
+.nvrmc

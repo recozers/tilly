@@ -1495,13 +1495,33 @@ app.post('/api/ai/smart-chat', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Create context from recent events for Haiku
-    const eventsContext = currentEvents.length > 0 
-      ? `Recent events: ${currentEvents.map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}`
-      : 'No recent events';
+    // Create rich context from current events
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const todaysEvents = currentEvents.filter(e => {
+      const eventDate = new Date(e.start).toISOString().split('T')[0];
+      return eventDate === today;
+    });
+    
+    const tomorrowDate = new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0];
+    const tomorrowEvents = currentEvents.filter(e => {
+      const eventDate = new Date(e.start).toISOString().split('T')[0];
+      return eventDate === tomorrowDate;
+    });
+    
+    const eventsContext = `
+TODAY (${today}): ${todaysEvents.length > 0 
+  ? todaysEvents.map(e => `"${e.title}" at ${new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`).join(', ')
+  : 'No events scheduled'}
+
+TOMORROW (${tomorrowDate}): ${tomorrowEvents.length > 0
+  ? tomorrowEvents.map(e => `"${e.title}" at ${new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`).join(', ')  
+  : 'No events scheduled'}
+
+Recent events: ${currentEvents.slice(0, 5).map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}`;
     
     // First, classify the request complexity
     const requestType = classifyRequest(message);
+    console.log(`🔍 Message: "${message}" classified as: ${requestType}`);
     
     if (requestType === 'complex') {
       // Use tool-based approach for complex queries
@@ -1513,15 +1533,14 @@ app.post('/api/ai/smart-chat', authenticateUser, async (req, res) => {
 
 ${eventsContext}
 
-For simple calendar requests, respond naturally and include ONE of these action types:
+For calendar requests, respond naturally and helpful. You have access to the user's current events above.
 
-CREATE_EVENT: {title: "Event Name", date: "YYYY-MM-DD", time: "HH:MM", duration: minutes}
+For actionable requests, include ONE of these patterns:
+
+CREATE_EVENT: {title: "Event Name", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}
 MOVE_EVENT: {eventTitle: "Existing Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}
-LIST_EVENTS: {date: "YYYY-MM-DD"} or {range: "week/month"}
 
-If the request is complex (searching, analyzing patterns, finding specific meetings), respond with: NEEDS_TOOLS: {reason: "explanation"}
-
-Be conversational and helpful. If creating events, suggest reasonable defaults.
+Do NOT use LIST_EVENTS or any other patterns - just answer questions about today/tomorrow using the context provided above.
 
 User: ${message}
 Assistant:`;
@@ -1549,8 +1568,12 @@ Assistant:`;
     const aiData = await response.json();
     const aiResponse = aiData.content[0].text;
     
+    console.log('🔍 AI Response:', aiResponse);
+    
     // Parse action suggestions from AI response
     const suggestions = parseActionSuggestions(aiResponse, userTimeZone);
+    
+    console.log('🔍 Parsed suggestions:', suggestions);
     
     res.json({
       response: aiResponse,
@@ -1569,21 +1592,34 @@ Assistant:`;
 
 // Classify request complexity to decide between fast parsing vs tools
 function classifyRequest(message) {
+  // Only truly complex queries that need deep search/analysis
   const complexPatterns = [
-    /when (did|was|have) i (last|previously|before)/i,
-    /how many (times|meetings|events)/i,
-    /find (all|events|meetings) (with|containing|about)/i,
-    /show me (all|events|meetings) (with|from|containing)/i,
-    /search (for|my calendar)/i,
-    /what meetings did i have/i,
+    /when (did|was|have) i (last|previously|before).*(meet|meeting|saw)/i, // "when did I last meet with John"
+    /how many.*(meetings|events).*(with|containing|about).+/i, // "how many meetings with specific person"
+    /find (all|events|meetings) (with|containing|about).+/i, // "find all meetings about project X"
+    /search.*(for|calendar).*(with|containing|about).+/i, // "search for meetings with John"
     /analyze my (schedule|calendar)/i,
     /pattern of (meetings|events)/i,
     /busiest (day|week|month)/i,
-    /free time (analysis|between)/i,
     /overlap(ping)? (meetings|events)/i,
     /recurring (meetings|events)/i
   ];
   
+  // Simple queries that should use context
+  const simplePatterns = [
+    /what.*(do i have|events|meetings).*(today|tomorrow|this week)/i,
+    /check.*(events|schedule|calendar).*(today|tomorrow)/i,
+    /show.*(today|tomorrow|this week)/i,
+    /am i (free|busy).*(today|tomorrow)/i,
+    /what's.*(today|tomorrow)/i
+  ];
+  
+  // If it's clearly simple, return simple
+  if (simplePatterns.some(pattern => pattern.test(message))) {
+    return 'simple';
+  }
+  
+  // Only complex if it matches complex patterns
   return complexPatterns.some(pattern => pattern.test(message)) ? 'complex' : 'simple';
 }
 
@@ -1750,8 +1786,8 @@ Assistant:`;
 function parseActionSuggestions(aiResponse, userTimeZone) {
   const suggestions = [];
   
-  // Look for CREATE_EVENT pattern
-  const createMatch = aiResponse.match(/CREATE_EVENT:\s*{([^}]+)}/);
+  // Look for CREATE_EVENT pattern - much more robust parsing
+  const createMatch = aiResponse.match(/CREATE_EVENT:\s*\{([^}]+)\}/);
   if (createMatch) {
     try {
       const eventData = parseEventData(createMatch[1]);
@@ -1761,31 +1797,31 @@ function parseActionSuggestions(aiResponse, userTimeZone) {
           title: eventData.title,
           date: eventData.date,
           time: eventData.time || '09:00',
-          duration: eventData.duration || 60,
+          duration: parseInt(eventData.duration) || 60,
           buttonText: `Create "${eventData.title}"`
         });
       }
     } catch (e) {
-      console.log('Failed to parse CREATE_EVENT:', e);
+      console.log('Failed to parse CREATE_EVENT:', e.message);
     }
   }
   
   // Look for MOVE_EVENT pattern  
-  const moveMatch = aiResponse.match(/MOVE_EVENT:\s*{([^}]+)}/);
+  const moveMatch = aiResponse.match(/MOVE_EVENT:\s*\{([^}]+)\}/);
   if (moveMatch) {
     try {
       const moveData = parseEventData(moveMatch[1]);
-      if (moveData.eventTitle) {
+      if (moveData.eventTitle && moveData.newDate) {
         suggestions.push({
           type: 'move_event',
           eventTitle: moveData.eventTitle,
           newDate: moveData.newDate,
-          newTime: moveData.newTime,
+          newTime: moveData.newTime || '09:00',
           buttonText: `Move "${moveData.eventTitle}"`
         });
       }
     } catch (e) {
-      console.log('Failed to parse MOVE_EVENT:', e);
+      console.log('Failed to parse MOVE_EVENT:', e.message);
     }
   }
   
@@ -1795,12 +1831,20 @@ function parseActionSuggestions(aiResponse, userTimeZone) {
 // Helper to parse event data from string
 function parseEventData(dataStr) {
   const data = {};
-  const pairs = dataStr.split(',');
+  
+  // More robust parsing that handles quotes and various formats
+  const cleanStr = dataStr.trim();
+  const pairs = cleanStr.split(',');
   
   pairs.forEach(pair => {
-    const [key, value] = pair.split(':').map(s => s.trim());
-    if (key && value) {
-      data[key] = value.replace(/"/g, '');
+    const colonIndex = pair.indexOf(':');
+    if (colonIndex !== -1) {
+      const key = pair.substring(0, colonIndex).trim();
+      const value = pair.substring(colonIndex + 1).trim();
+      if (key && value) {
+        // Remove quotes and clean up
+        data[key] = value.replace(/^["']|["']$/g, '').trim();
+      }
     }
   });
   

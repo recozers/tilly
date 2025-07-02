@@ -459,6 +459,13 @@ const App = () => {
 
   // Handle AI suggestion confirmation
   const handleAIConfirm = async (messageId, originalTools) => {
+    console.log('🔍 AI Confirm called with tools:', originalTools) // Debug log
+    
+    if (!originalTools || !Array.isArray(originalTools)) {
+      console.error('❌ No tools to execute')
+      return
+    }
+    
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const headers = {
@@ -990,16 +997,19 @@ const App = () => {
       }
 
       const data = await response.json()
+      console.log('🔍 AI Response:', data) // Debug log
       
       // Check if AI wants to create/modify events
       const hasEventActions = data.suggestedTools && data.suggestedTools.some(tool => 
         ['create_event', 'move_event'].includes(tool.name)
       )
+      console.log('🔍 Has event actions:', hasEventActions) // Debug log
       
       let botResponseText = data.response
       let botMessage
       
       if (hasEventActions) {
+        console.log('🔍 Processing event actions:', data.suggestedTools) // Debug log
         // Convert suggested tools to EventConfirmation format
         const actions = data.suggestedTools.filter(tool => 
           ['create_event', 'move_event'].includes(tool.name)
@@ -1040,6 +1050,7 @@ const App = () => {
           },
           originalTools: data.suggestedTools // Store for execution later
         }
+        console.log('🔍 Created bot message with confirmation:', botMessage) // Debug log
       } else {
         // Regular response without event actions
         botMessage = {
@@ -2117,6 +2128,7 @@ const App = () => {
                   {/* Show EventConfirmation for AI messages that need confirmation */}
                   {message.needsConfirmation && message.responseData && (
                     <div style={{ marginTop: '8px' }}>
+                      {console.log('🔍 Rendering EventConfirmation for message:', message.id)} {/* Debug log */}
                       <EventConfirmation
                         responseData={message.responseData}
                         onConfirm={() => handleAIConfirm(message.id, message.originalTools)}

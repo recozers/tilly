@@ -54,6 +54,29 @@
   font-size: 1.1rem;
 }
 
+.event-title-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 2px solid #c8d5c4;
+  border-radius: 6px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #2d4a2b;
+  background: #fefdf9;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.event-title-input:focus {
+  border-color: #4a6741;
+  box-shadow: 0 0 0 3px rgba(74, 103, 65, 0.1);
+}
+
+.event-title-input::placeholder {
+  color: #9ca3af;
+  font-weight: normal;
+}
+
 .event-time {
   color: #5a6b57;
   font-size: 0.9rem;

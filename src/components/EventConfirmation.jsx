@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './EventConfirmation.css';
 
 const EventConfirmation = ({ 
@@ -8,6 +8,14 @@ const EventConfirmation = ({
   isLoading = false 
 }) => {
   const [selectedActions, setSelectedActions] = useState([]);
+  const [editableTitle, setEditableTitle] = useState('');
+
+  // Initialize title when responseData changes
+  useEffect(() => {
+    if (responseData?.eventData?.title) {
+      setEditableTitle(responseData.eventData.title);
+    }
+  }, [responseData]);
 
   if (!responseData || typeof responseData === 'string') {
     return null;
@@ -39,7 +47,14 @@ const EventConfirmation = ({
           <h4>📅 Add New Event</h4>
         </div>
         <div className="event-details">
-          <div className="event-title">{eventData.title}</div>
+          <input
+            type="text"
+            value={editableTitle}
+            onChange={(e) => setEditableTitle(e.target.value)}
+            placeholder="Event title"
+            className="event-title-input"
+            autoFocus
+          />
           <div className="event-time">
             {start.date} • {start.time} - {end.time}
           </div>
@@ -93,9 +108,21 @@ const EventConfirmation = ({
     if (responseData.type === 'multiple_actions') {
       onConfirm(responseData.actions);
     } else if (responseData.type === 'event_suggestion') {
-      onConfirm([{ type: 'event_suggestion', eventData: responseData.eventData }]);
+      // Use the edited title for new events
+      const updatedEventData = {
+        ...responseData.eventData,
+        title: editableTitle.trim() || 'New Event'
+      };
+      onConfirm([{ type: 'event_suggestion', eventData: updatedEventData }]);
     } else if (responseData.type === 'event_rearrangement') {
       onConfirm([{ type: 'event_rearrangement', rearrangements: responseData.rearrangements }]);
+    } else if (responseData.type === 'event_edit') {
+      // Use the edited title for event edits
+      const updatedEventData = {
+        ...responseData.eventData,
+        title: editableTitle.trim() || responseData.eventData.title
+      };
+      onConfirm([{ type: 'event_edit', eventData: updatedEventData }]);
     }
   };
 

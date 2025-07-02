@@ -1528,22 +1528,16 @@ Recent events: ${currentEvents.slice(0, 5).map(e => `"${e.title}" on ${new Date(
       return await handleComplexRequest(message, currentEvents, userTimeZone, req, res);
     }
     
-    // Smart prompt for simple requests - fast direct parsing
-    const smartPrompt = `You are Tilly, a friendly calendar assistant. Current time: ${new Date().toLocaleString()} (${userTimeZone}).
+    // Optimized prompt for speed and clarity - place action at end
+    const smartPrompt = `Calendar Assistant. Time: ${new Date().toLocaleString()} (${userTimeZone})
 
 ${eventsContext}
 
-For calendar requests, respond naturally and helpful. You have access to the user's current events above.
-
-For actionable requests, include ONE of these patterns:
-
-CREATE_EVENT: {title: "Event Name", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}
-MOVE_EVENT: {eventTitle: "Existing Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}
-
-Do NOT use LIST_EVENTS or any other patterns - just answer questions about today/tomorrow using the context provided above.
-
 User: ${message}
-Assistant:`;
+
+Respond naturally first, then if action needed, add on new line:
+CREATE_EVENT: {title: "Name", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}
+MOVE_EVENT: {eventTitle: "Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}`;
 
     console.log('🤖 Making streamlined Haiku request...');
     
@@ -1556,7 +1550,7 @@ Assistant:`;
       },
       body: JSON.stringify({
         model: 'claude-3-5-haiku-20241022',
-        max_tokens: 500,
+        max_tokens: 200, // Reduced for faster responses
         messages: [{ role: 'user', content: smartPrompt }]
       })
     });
@@ -1573,10 +1567,18 @@ Assistant:`;
     // Parse action suggestions from AI response
     const suggestions = parseActionSuggestions(aiResponse, userTimeZone);
     
+    // Clean the response text by removing action patterns
+    const cleanedResponse = aiResponse
+      .replace(/CREATE_EVENT:\s*\{[^}]+\}/g, '')
+      .replace(/MOVE_EVENT:\s*\{[^}]+\}/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
     console.log('🔍 Parsed suggestions:', suggestions);
+    console.log('🔍 Cleaned response:', cleanedResponse);
     
     res.json({
-      response: aiResponse,
+      response: cleanedResponse,
       suggestions: suggestions,
       success: true
     });

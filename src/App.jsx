@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { parseEventRequest } from './claudeApi.js'
 import * as eventsApi from './eventsApi.js'
 import { useAuth } from './contexts/AuthContext'
 import { supabase } from './lib/supabase'
 import AuthModal from './components/Auth/AuthModal'
 import UserProfile from './components/Auth/UserProfile'
+import EventConfirmation from './components/EventConfirmation'
 import './App.css'
 import useEventLayout from './hooks/useEventLayout'
 
@@ -21,8 +21,6 @@ const App = () => {
 
 
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [isCreatingEvent, setIsCreatingEvent] = useState(false)
-  const [newEventData, setNewEventData] = useState(null)
   const [dragState, setDragState] = useState(null)
   const [editingEventId, setEditingEventId] = useState(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -64,6 +62,8 @@ const App = () => {
   const [inviteEmails, setInviteEmails] = useState([''])
   const [inviteMessage, setInviteMessage] = useState('')
   const [isSendingInvites, setIsSendingInvites] = useState(false)
+  const [showEventConfirmation, setShowEventConfirmation] = useState(false)
+  const [pendingEventData, setPendingEventData] = useState(null)
 
   // Use the event layout hook for proper overlapping
   const eventsWithLayout = useEventLayout(events)
@@ -409,30 +409,115 @@ const App = () => {
     const endTime = new Date(startTime)
     endTime.setHours(hours + 1, minutes, 0, 0)
 
-    setNewEventData({ start: startTime, end: endTime })
-    setIsCreatingEvent(true)
+    // Use EventConfirmation for new events
+    setPendingEventData({
+      type: 'event_suggestion',
+      eventData: {
+        title: 'New Event',
+        start: startTime.toISOString(),
+        end: endTime.toISOString()
+      },
+      message: 'Create a new event:'
+    })
+    setShowEventConfirmation(true)
   }
 
-  // Create new event
-  const createEvent = async (title) => {
-    if (!title.trim() || !newEventData) return
-
+  // Handle event confirmation
+  const handleEventConfirm = async (actions) => {
     try {
-      const newEvent = await eventsApi.createEvent({
-        title: title.trim(),
-        start: newEventData.start,
-        end: newEventData.end,
-        color: '#4A7C2A'
-      })
-
-      setEvents(prev => [...prev, newEvent])
-      setIsCreatingEvent(false)
-      setNewEventData(null)
+      for (const action of actions) {
+        if (action.type === 'event_suggestion') {
+          const newEvent = await eventsApi.createEvent({
+            title: action.eventData.title.trim(),
+            start: new Date(action.eventData.start),
+            end: new Date(action.eventData.end),
+            color: '#4A7C2A'
+          })
+          setEvents(prev => [...prev, newEvent])
+          setSuccessMessage('Event created successfully!')
+        } else if (action.type === 'event_edit') {
+          const updatedEvent = await eventsApi.updateEvent(action.eventData.id, {
+            title: action.eventData.title.trim()
+          })
+          setEvents(prev => prev.map(e => e.id === action.eventData.id ? updatedEvent : e))
+          setSuccessMessage('Event updated successfully!')
+        }
+      }
+      setShowEventConfirmation(false)
+      setPendingEventData(null)
     } catch (error) {
-      console.error('Failed to create event:', error)
-      setError('Failed to create event. Please try again.')
+      console.error('Failed to process event:', error)
+      setError('Failed to process event. Please try again.')
     }
   }
+
+  // Handle event confirmation cancel
+  const handleEventCancel = () => {
+    setShowEventConfirmation(false)
+    setPendingEventData(null)
+  }
+
+  // Handle AI suggestion confirmation
+  const handleAIConfirm = async (messageId, originalTools) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`
+      }
+
+      // Execute the original tools
+      const response = await fetch('/api/ai/execute-tools', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          tools: originalTools,
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        }),
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        
+        // Add success message
+        const successMessage = {
+          id: Date.now().toString(),
+          text: "✅ Calendar updated successfully!",
+          sender: 'bot',
+          timestamp: new Date(),
+          isSuccess: true
+        }
+        setMessages(prev => [...prev, successMessage])
+        
+        // Refresh calendar
+        await loadEvents()
+      } else {
+        throw new Error('Failed to execute tools')
+      }
+    } catch (error) {
+      console.error('Error executing AI tools:', error)
+      const errorMessage = {
+        id: Date.now().toString(),
+        text: "❌ Sorry, there was an error updating your calendar. Please try again.",
+        sender: 'bot',
+        timestamp: new Date(),
+        isError: true
+      }
+      setMessages(prev => [...prev, errorMessage])
+    }
+  }
+
+  // Handle AI suggestion cancel
+  const handleAICancel = (messageId) => {
+    const cancelMessage = {
+      id: Date.now().toString(),
+      text: "No changes made to your calendar. Is there anything else I can help you with?",
+      sender: 'bot',
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, cancelMessage])
+  }
+
 
   // Delete event
   const deleteEvent = async (eventId) => {
@@ -484,16 +569,17 @@ const App = () => {
     e.preventDefault()
     e.stopPropagation()
     
-    const newTitle = window.prompt('Edit event title:', event.title)
-    if (newTitle && newTitle.trim()) {
-      updateEventInDatabase(event.id, { title: newTitle.trim() })
-        .then(updatedEvent => {
-          setEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e))
-        })
-        .catch(error => {
-          console.error('Failed to update title:', error)
-        })
-    }
+    setPendingEventData({
+      type: 'event_edit',
+      eventData: {
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end
+      },
+      message: 'Edit event:'
+    })
+    setShowEventConfirmation(true)
   }
 
   // Start resizing from top
@@ -665,11 +751,6 @@ const App = () => {
     setCurrentDate(new Date())
   }
 
-  // Jump to a specific month/year
-  const goToDate = (year, month) => {
-    const targetDate = new Date(year, month, 1)
-    setCurrentDate(targetDate)
-  }
 
   // Enhanced import functions
   const handleFileSelect = (e) => {
@@ -892,14 +973,15 @@ const App = () => {
         'Authorization': `Bearer ${session?.access_token}`
       }
 
-      // Use the new clean tool-based AI endpoint
+      // Use AI endpoint in suggestion mode first to avoid latency
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
           message: messageText,
           chatHistory: chatHistory,
-          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          suggestionMode: true // Don't execute tools, just return suggestions
         }),
       })
 
@@ -909,26 +991,65 @@ const App = () => {
 
       const data = await response.json()
       
-      // Create bot response message
+      // Check if AI wants to create/modify events
+      const hasEventActions = data.suggestedTools && data.suggestedTools.some(tool => 
+        ['create_event', 'move_event'].includes(tool.name)
+      )
+      
       let botResponseText = data.response
+      let botMessage
       
-      // If there were tool executions, log them and refresh calendar if needed
-      if (data.toolResults && data.toolResults.length > 0) {
-        console.log('🔧 Tool executions:', data.toolResults)
+      if (hasEventActions) {
+        // Convert suggested tools to EventConfirmation format
+        const actions = data.suggestedTools.filter(tool => 
+          ['create_event', 'move_event'].includes(tool.name)
+        ).map(tool => {
+          if (tool.name === 'create_event') {
+            return {
+              type: 'event_suggestion',
+              eventData: {
+                title: tool.input.title,
+                start: new Date(tool.input.start_time).toISOString(),
+                end: new Date(tool.input.end_time).toISOString()
+              }
+            }
+          } else if (tool.name === 'move_event') {
+            return {
+              type: 'event_rearrangement', 
+              rearrangements: [{
+                eventId: tool.input.event_id,
+                currentTitle: tool.input.new_title || 'Event',
+                newStart: new Date(tool.input.new_start_time).toISOString(),
+                newEnd: new Date(tool.input.new_end_time).toISOString()
+              }]
+            }
+          }
+        })
+        
+        // Show bot message with confirmation UI
+        botMessage = {
+          id: (Date.now() + 1).toString(),
+          text: botResponseText,
+          sender: 'bot',
+          timestamp: new Date(),
+          needsConfirmation: true,
+          responseData: {
+            type: actions.length === 1 ? actions[0].type : 'multiple_actions',
+            ...(actions.length === 1 ? actions[0] : { actions }),
+            message: botResponseText
+          },
+          originalTools: data.suggestedTools // Store for execution later
+        }
+      } else {
+        // Regular response without event actions
+        botMessage = {
+          id: (Date.now() + 1).toString(),
+          text: botResponseText,
+          sender: 'bot',
+          timestamp: new Date(),
+        }
       }
       
-      // Refresh calendar if events were changed
-      if (data.hasEventChanges) {
-        console.log('🔄 Refreshing calendar due to event changes')
-        await loadEvents()
-      }
-
-      const botMessage = {
-        id: (Date.now() + 1).toString(),
-        text: botResponseText,
-        sender: 'bot',
-        timestamp: new Date(),
-      }
       setMessages(currentMessages => [...currentMessages, botMessage])
 
     } catch (error) {
@@ -1993,7 +2114,16 @@ const App = () => {
                     {message.text}
                   </div>
                   
-                  {/* Tool-based AI now handles actions automatically - no more pending action buttons needed */}
+                  {/* Show EventConfirmation for AI messages that need confirmation */}
+                  {message.needsConfirmation && message.responseData && (
+                    <div style={{ marginTop: '8px' }}>
+                      <EventConfirmation
+                        responseData={message.responseData}
+                        onConfirm={() => handleAIConfirm(message.id, message.originalTools)}
+                        onCancel={() => handleAICancel(message.id)}
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
               
@@ -2061,52 +2191,17 @@ const App = () => {
         </div>
       </div>
 
-      {/* Event Creation Modal */}
-      {isCreatingEvent && (
-        <div className="event-creation-modal">
-          <div className="event-creation-content">
-            <h3>Create New Event</h3>
-            <p>{newEventData && `${newEventData.start.toLocaleDateString()} at ${newEventData.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</p>
-            <input
-              type="text"
-              placeholder="Event title"
-              autoFocus
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  createEvent(e.target.value)
-                }
-              }}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #d1d5db',
-                borderRadius: '8px',
-                fontSize: '14px',
-                marginBottom: '16px',
-                outline: 'none'
-              }}
-            />
-            <div className="event-creation-buttons">
-              <button
-                onClick={() => {
-                  setIsCreatingEvent(false)
-                  setNewEventData(null)
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const input = document.querySelector('input[placeholder="Event title"]')
-                  createEvent(input.value)
-                }}
-              >
-                Create
-              </button>
-            </div>
-          </div>
+      {/* Event Confirmation Modal */}
+      {showEventConfirmation && pendingEventData && (
+        <div className="event-confirmation-modal">
+          <EventConfirmation
+            responseData={pendingEventData}
+            onConfirm={handleEventConfirm}
+            onCancel={handleEventCancel}
+          />
         </div>
       )}
+
 
       {/* Import Modal */}
       {showSubscriptions && (

@@ -30,6 +30,36 @@ const {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Simple in-memory cache for AI responses
+const responseCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const MAX_CACHE_SIZE = 100;
+
+// Cache cleanup function
+const cleanupCache = () => {
+  const now = Date.now();
+  for (const [key, value] of responseCache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      responseCache.delete(key);
+    }
+  }
+  // Keep cache size under limit
+  if (responseCache.size > MAX_CACHE_SIZE) {
+    const entries = Array.from(responseCache.entries());
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    const toDelete = entries.slice(0, responseCache.size - MAX_CACHE_SIZE);
+    toDelete.forEach(([key]) => responseCache.delete(key));
+  }
+};
+
+// Run cache cleanup every 5 minutes
+setInterval(cleanupCache, 5 * 60 * 1000);
+
+// Generate cache key from message and user context
+const generateCacheKey = (message, userId, contextHash) => {
+  return `${userId}:${message.toLowerCase().trim()}:${contextHash}`;
+};
+
 // Get detailed timezone information for the user
 function getUserTimezoneInfo(userTimeZone = null) {
   console.log('🌍 === TIMEZONE INFO DEBUG START ===');
@@ -422,6 +452,7 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
     const requestBody = {
       model: 'claude-3-5-haiku-20240307',
       max_tokens: 1000,
+      stream: true,
       messages: [{
         role: 'user',
         content: createCalendarPrompt(message, context)
@@ -486,55 +517,120 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
       throw new Error(`Claude API request failed: ${response.status} ${response.statusText}`);
     }
 
-    const claudeData = await response.json();
-    const claudeResponse = claudeData.content[0].text;
+    // Set up streaming response headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    let fullResponse = '';
     
-    // Try to extract JSON from the response (could be mixed with text)
-    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      try {
-        const actionData = JSON.parse(jsonMatch[0]);
-        if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement' || actionData.type === 'multiple_actions') {
-          // Validate the action data before sending to frontend
-          const validationResult = validateActionData(actionData, context);
-          if (!validationResult.valid) {
-            console.error('🚨 Claude response validation failed:', validationResult.error);
-            console.error('🚨 Original Claude response:', claudeResponse);
-            // Send error response back to user explaining the issue
-            res.status(400).json({ 
-              error: 'Invalid calendar response detected',
-              details: validationResult.error,
-              suggestion: 'Please try rephrasing your request or ask for a different time slot.'
-            });
-            return;
-          } else {
-            // Extract the text part (everything before the JSON)
-            const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
+    // Handle streaming response
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
             
-            // Return both the conversational text and the structured action data
-            res.json({ 
-              response: {
-                type: actionData.type,
-                message: textPart || actionData.message,
-                eventData: actionData.eventData,
-                rearrangements: actionData.rearrangements || null,
-                actions: actionData.actions || null
-              }, 
-              context: context 
-            });
-            return;
+            if (data === '[DONE]') {
+              break;
+            }
+            
+            try {
+              const parsed = JSON.parse(data);
+              
+              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                const text = parsed.delta.text;
+                fullResponse += text;
+                
+                // Send streaming chunk to frontend
+                res.write(`data: ${JSON.stringify({ 
+                  type: 'chunk', 
+                  content: text 
+                })}\n\n`);
+              }
+            } catch (e) {
+              // Skip invalid JSON
+            }
           }
         }
-      } catch (e) {
-        // JSON parsing failed, treat as regular text
-        console.warn('Failed to parse JSON from Claude response:', e.message);
-        console.warn('Original Claude response:', claudeResponse);
       }
+      
+      // Process the complete response
+      const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
+      
+      if (jsonMatch) {
+        try {
+          const actionData = JSON.parse(jsonMatch[0]);
+          if (actionData.type === 'event_suggestion' || actionData.type === 'event_rearrangement' || actionData.type === 'multiple_actions') {
+            // Validate the action data before sending to frontend
+            const validationResult = validateActionData(actionData, context);
+            if (!validationResult.valid) {
+              console.error('🚨 Claude response validation failed:', validationResult.error);
+              res.write(`data: ${JSON.stringify({ 
+                type: 'error', 
+                error: 'Invalid calendar response detected',
+                details: validationResult.error 
+              })}\n\n`);
+              res.write('data: [DONE]\n\n');
+              res.end();
+              return;
+            } else {
+              // Extract the text part (everything before the JSON)
+              const textPart = fullResponse.replace(jsonMatch[0], '').trim();
+              
+              // Send final structured response
+              res.write(`data: ${JSON.stringify({ 
+                type: 'complete',
+                response: {
+                  type: actionData.type,
+                  message: textPart || actionData.message,
+                  eventData: actionData.eventData,
+                  rearrangements: actionData.rearrangements || null,
+                  actions: actionData.actions || null
+                },
+                context: context
+              })}\n\n`);
+              res.write('data: [DONE]\n\n');
+              res.end();
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to parse JSON from Claude response:', e.message);
+        }
+      }
+      
+      // Send final response
+      res.write(`data: ${JSON.stringify({ 
+        type: 'complete',
+        response: fullResponse, 
+        context: context 
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      
+    } catch (streamError) {
+      console.error('Streaming error:', streamError);
+      res.write(`data: ${JSON.stringify({ 
+        type: 'error', 
+        error: 'Streaming failed' 
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
     }
-    
-    // Regular text response
-    res.json({ response: claudeResponse, context: context });
   } catch (error) {
     console.error('Error processing calendar query:', error);
     res.status(500).json({ error: 'Failed to process calendar query' });
@@ -893,7 +989,7 @@ app.post('/api/tools/check_time_conflicts', authenticateUser, async (req, res) =
 // NEW: Tool-based Claude AI endpoint
 app.post('/api/ai/chat', authenticateUser, async (req, res) => {
   try {
-    const { message, chatHistory = [], userTimeZone } = req.body;
+    const { message, chatHistory = [], userTimeZone, suggestionMode = false } = req.body;
     
     console.log('🌐 === AI CHAT REQUEST DEBUG ===');
     console.log('🌐 Received userTimeZone:', userTimeZone);
@@ -1149,6 +1245,29 @@ CONFLICT RESOLUTION STRATEGY:
     const hasToolUse = claudeData.content.some(content => content.type === 'tool_use');
     
     if (hasToolUse) {
+      if (suggestionMode) {
+        console.log('🔧 Claude wants to use tools, returning suggestions without executing...');
+        
+        // Extract tool suggestions without executing
+        const suggestedTools = claudeData.content
+          .filter(content => content.type === 'tool_use')
+          .map(toolUse => ({
+            name: toolUse.name,
+            input: toolUse.input
+          }));
+        
+        const responseText = claudeData.content
+          .filter(content => content.type === 'text')
+          .map(content => content.text)
+          .join('');
+        
+        return res.json({
+          response: responseText,
+          suggestedTools,
+          success: true
+        });
+      }
+      
       console.log('🔧 Claude wants to use tools, executing and getting final response...');
       
       // Execute all tool calls
@@ -1362,6 +1481,71 @@ CONFLICT RESOLUTION STRATEGY:
     console.error('Error in AI chat:', error);
     res.status(500).json({ 
       error: 'Failed to process AI request',
+      details: error.message 
+    });
+  }
+});
+
+// Execute AI suggested tools endpoint
+app.post('/api/ai/execute-tools', authenticateUser, async (req, res) => {
+  try {
+    const { tools, userTimeZone } = req.body;
+    
+    if (!tools || !Array.isArray(tools)) {
+      return res.status(400).json({ error: 'Tools array is required' });
+    }
+    
+    // Store user's timezone in request for tool functions
+    req.userTimeZone = userTimeZone;
+    
+    const results = [];
+    
+    // Execute each tool
+    for (const tool of tools) {
+      let result;
+      try {
+        switch (tool.name) {
+          case 'create_event':
+            result = await executeCreateEvent(tool.input, req);
+            break;
+          case 'move_event':
+            result = await executeMoveEvent(tool.input, req);
+            break;
+          case 'get_calendar_events':
+            result = await executeGetCalendarEvents(tool.input, req);
+            break;
+          case 'check_time_conflicts':
+            result = await executeCheckTimeConflicts(tool.input, req);
+            break;
+          default:
+            result = { success: false, error: `Unknown tool: ${tool.name}` };
+        }
+        result._tool_name = tool.name;
+        results.push(result);
+      } catch (error) {
+        console.error(`Error executing tool ${tool.name}:`, error);
+        results.push({
+          success: false,
+          error: error.message,
+          _tool_name: tool.name
+        });
+      }
+    }
+    
+    const hasEventChanges = results.some(result => 
+      result.success && ['create_event', 'move_event'].includes(result._tool_name)
+    );
+    
+    res.json({
+      results,
+      hasEventChanges,
+      success: true
+    });
+    
+  } catch (error) {
+    console.error('Error executing tools:', error);
+    res.status(500).json({ 
+      error: 'Failed to execute tools',
       details: error.message 
     });
   }
@@ -2550,6 +2734,22 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
       chatHistory
     };
     
+    // Generate context hash for caching (simple hash of event count and day)
+    const contextHash = `${now.toDateString()}-${recentEvents.length}-${todayEvents.length}`;
+    const cacheKey = generateCacheKey(query, req.userId, contextHash);
+    
+    // Check cache first for non-time-sensitive queries
+    const isTimeQuery = /\b(now|current|today|time|when|schedule|free|busy|available)\b/i.test(query);
+    if (!isTimeQuery && responseCache.has(cacheKey)) {
+      const cached = responseCache.get(cacheKey);
+      console.log('📝 Serving cached response for query:', query);
+      return res.json({ 
+        response: cached.response, 
+        context: calendarContext,
+        cached: true
+      });
+    }
+    
     // Use Claude API for intelligent calendar assistance
     const requestBody = {
       model: 'claude-3-5-haiku-20240307',
@@ -2644,15 +2844,25 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
             // Extract the text part (everything before the JSON)
             const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
             
+            const responseData = {
+              type: actionData.type,
+              message: textPart || actionData.message,
+              eventData: actionData.eventData,
+              rearrangements: actionData.rearrangements || null,
+              actions: actionData.actions || null
+            };
+            
+            // Cache non-time-sensitive responses
+            if (!isTimeQuery) {
+              responseCache.set(cacheKey, {
+                response: responseData,
+                timestamp: Date.now()
+              });
+            }
+            
             // Return both the conversational text and the structured action data
             res.json({ 
-              response: {
-                type: actionData.type,
-                message: textPart || actionData.message,
-                eventData: actionData.eventData,
-                rearrangements: actionData.rearrangements || null,
-                actions: actionData.actions || null
-              }, 
+              response: responseData, 
               context: calendarContext 
             });
             return;
@@ -2663,6 +2873,14 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
         console.warn('Failed to parse JSON from Claude response:', e.message);
         console.warn('Original Claude response:', claudeResponse);
       }
+    }
+    
+    // Cache non-time-sensitive responses
+    if (!isTimeQuery) {
+      responseCache.set(cacheKey, {
+        response: claudeResponse,
+        timestamp: Date.now()
+      });
     }
     
     // Regular text response
@@ -2875,234 +3093,73 @@ function validateActionData(actionData, context = null) {
 
 // Create a well-engineered prompt for Claude
 function createCalendarPrompt(query, context) {
-  // Format chat history for the prompt
-  const chatHistorySection = context.chatHistory && context.chatHistory.length > 0 
-    ? `
-CHAT HISTORY (Recent conversation context):
-${context.chatHistory.slice(-10).map((msg, index) => {
-  const timestamp = utcToLocal(msg.timestamp, '24h', context.timezone);
-  return `[${timestamp}] ${msg.sender === 'user' ? 'User' : 'Tilly'}: ${msg.text}`;
-}).join('\n')}
-` 
-    : '';
+  // Group events by day for better context
+  const weekEvents = context.recentEvents || [];
+  const eventsByDay = {};
+  
+  // Initialize days of the week
+  const today = new Date();
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + i);
+    const dayKey = date.toDateString();
+    eventsByDay[dayKey] = [];
+  }
+  
+  // Organize events by day
+  weekEvents.forEach(event => {
+    const eventDate = new Date(event.start);
+    const dayKey = eventDate.toDateString();
+    if (eventsByDay[dayKey] !== undefined) {
+      eventsByDay[dayKey].push(event);
+    }
+  });
 
-  return `You are Tilly, an intelligent calendar assistant. You have full access to the user's calendar and can help with scheduling, availability, and calendar management.
+  // Build weekly context string
+  let weeklyContext = '';
+  Object.entries(eventsByDay).forEach(([dayKey, events], index) => {
+    const date = new Date(dayKey);
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+    const dayDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    
+    if (events.length > 0) {
+      const eventsText = events.map(e => {
+        const startTime = utcToLocal(e.start, '24h', context.timezone);
+        const endTime = utcToLocal(e.end, '24h', context.timezone);
+        return `[ID:${e.id}] ${e.title} ${startTime}-${endTime}`;
+      }).join('; ');
+      weeklyContext += `${dayName} ${dayDate}: ${eventsText}\n`;
+    } else {
+      weeklyContext += `${dayName} ${dayDate}: Free\n`;
+    }
+  });
 
-CURRENT CONTEXT:
-- Current local time: ${context.currentLocalTime}
-- Timezone: ${context.timezone}
-- Current date: ${context.currentDate} (${context.currentDay})
-- Total events in next 7 days: ${context.totalEvents}${chatHistorySection}
+  return `You are Tilly, a calendar assistant. Time: ${context.currentLocalTime} (${context.timezone}).
 
-TODAY'S EVENTS (${context.todayEvents.length}):
-${context.todayEvents.map(e => {
-  const startTime = utcToLocal(e.start, '24h', context.timezone);
-  const endTime = utcToLocal(e.end, '24h', context.timezone);
-  return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
-}).join('\n') || '- No events today'}
+WEEK SCHEDULE:
+${weeklyContext.trim()}
 
-TOMORROW'S EVENTS (${context.tomorrowEvents.length}):
-${context.tomorrowEvents.map(e => {
-  const startTime = utcToLocal(e.start, '24h', context.timezone);
-  const endTime = utcToLocal(e.end, '24h', context.timezone);
-  return `- [ID:${e.id}] ${e.title} from ${startTime} to ${endTime}`;
-}).join('\n') || '- No events tomorrow'}
+Query: "${query}"
 
-UPCOMING EVENTS (${context.upcomingEvents.length}):
-${context.upcomingEvents.map(e => {
-  const date = new Date(e.start).toLocaleDateString();
-  const startTime = utcToLocal(e.start, '24h', context.timezone);
-  const endTime = utcToLocal(e.end, '24h', context.timezone);
-  return `- [ID:${e.id}] ${e.title} on ${date} from ${startTime} to ${endTime}`;
-}).join('\n') || '- No upcoming events'}
+For scheduling: Check conflicts using event IDs and times above. If conflict found, use "multiple_actions" to rearrange existing events. Otherwise use "event_suggestion".
+Be concise. End with JSON:
 
-WEEKLY STATS:
-- Total events this week: ${context.weeklyStats.totalEvents}
-- Total hours: ${context.weeklyStats.totalHours.toFixed(1)}
-- Busiest day: ${context.weeklyStats.busiestDay || 'None'}
-
-USER QUERY: "${query}"
-
-INSTRUCTIONS:
-1. Use the chat history above to maintain context and provide coherent follow-up responses. Reference previous conversations when relevant.
-
-2. For event scheduling requests, be CONCISE and helpful. 
-
-MANDATORY CONFLICT CHECK PROCESS (do this mentally, don't write it out):
-- STEP 1: Identify your proposed event's start and end times
-- STEP 2: Check if times overlap with existing events using: (your_start < their_end) AND (your_end > their_start)
-- STEP 3: If ANY conflict found, use "multiple_actions" to rearrange. If no conflicts, use "event_suggestion"
-
-Keep responses SHORT - don't repeat information the user can already see. Then end with a JSON object:
-
-Example for scheduling WITHOUT conflict:
-"Perfect! I can schedule your meeting tomorrow at 6pm - no conflicts.
-
+No conflict:
 {
   "type": "event_suggestion",
-  "message": "Add meeting to calendar?",
-  "eventData": {
-    "title": "Team Meeting",
-    "start": "2025-05-27T18:00:00",
-    "end": "2025-05-27T19:00:00"
-  }
-}"
+  "message": "Add to calendar?",
+  "eventData": {"title": "Title", "start": "2025-05-27T18:00:00", "end": "2025-05-27T19:00:00"}
+}
 
-Example for scheduling WITH conflict:
-"Conflict detected - I'll move Vector Embeddings to 1pm-4pm and add Collect Tilly at the requested time.
-
-{
-  \"type\": \"multiple_actions\",
-  \"message\": \"Rearrange schedule?\",
-  \"actions\": [
-    {
-      \"type\": \"event_rearrangement\",
-      \"rearrangements\": [
-                 {
-           \"eventId\": 405,
-           \"currentTitle\": \"Implement Vector Embeddings Approach\",
-           \"newStart\": \"2025-06-08T13:00:00\",
-           \"newEnd\": \"2025-06-08T16:00:00\"
-         }
-      ]
-    },
-    {
-      \"type\": \"event_suggestion\",
-      \"eventData\": {
-        \"title\": \"Collect Tilly\",
-        \"start\": \"2025-06-08T09:30:00\",
-        \"end\": \"2025-06-08T12:00:00\"
-      }
-    }
-  ]
-}"
-
-3. For event rearrangement requests (move, reschedule, change time), suggest moving existing events:
-
-Example for rearrangement:
-"I can help you change the duration of your Flight Home! Let me update it to 7 hours as requested.
-
-{
-  "type": "event_rearrangement",
-  "message": "Would you like me to update the Flight Home duration to 7 hours?",
-  "rearrangements": [
-    {
-      "eventId": 5,
-      "currentTitle": "Flight Home",
-      "newStart": "2025-05-31T18:00:00",
-      "newEnd": "2025-06-01T01:00:00"
-    }
-  ]
-}"
-
-
-
-Example for multiple actions (reschedule + add new event):
-"I'll reschedule your Vector Embeddings event to 1pm-4pm and add Collect Tilly at 9:30am-12pm.
-
+With conflict:
 {
   "type": "multiple_actions",
-  "message": "Would you like me to reschedule the existing event and add the new one?",
+  "message": "Rearrange?",
   "actions": [
-    {
-      "type": "event_rearrangement",
-      "rearrangements": [
-        {
-          "eventId": 405,
-          "currentTitle": "Implement Vector Embeddings Approach",
-          "newStart": "2025-06-08T13:00:00",
-          "newEnd": "2025-06-08T16:00:00"
-        }
-      ]
-    },
-    {
-      "type": "event_suggestion",
-      "eventData": {
-        "title": "Collect Tilly",
-        "start": "2025-06-08T09:30:00",
-        "end": "2025-06-08T12:00:00"
-      }
-    }
+    {"type": "event_rearrangement", "rearrangements": [{"eventId": 123, "currentTitle": "Old Event", "newStart": "2025-05-27T13:00:00", "newEnd": "2025-05-27T14:00:00"}]},
+    {"type": "event_suggestion", "eventData": {"title": "New Event", "start": "2025-05-27T18:00:00", "end": "2025-05-27T19:00:00"}}
   ]
-}"
-
-4. For all other queries (availability, upcoming events, summaries, etc.), respond with BRIEF conversational text only. 
-
-CRITICAL: DO NOT include any JSON whatsoever for informational queries. Only text responses for availability, summaries, and general questions.
-
-5. IMPORTANT: A scheduling conflict only occurs when the proposed time OVERLAPS with an existing event. Multiple events on the same day are perfectly fine if they don't overlap in time.
-
-CRITICAL CONFLICT CHECK: Before suggesting any event, you MUST check:
-- Look at the exact start and end times of ALL existing events
-- Check if your proposed time overlaps with ANY existing event
-- An event conflicts if: (new_start < existing_end) AND (new_end > existing_start)
-- Example: If Vector Embeddings is 2:00 PM to 5:00 PM, then 2:15 PM to 2:45 PM CONFLICTS (overlaps)
-- Example: If Walk Dogs is 1:00 PM to 2:00 PM, then 2:00 PM to 3:00 PM is OK (no overlap)
-- CRITICAL: Always consider BOTH start AND end times - don't just look at start times!
-- STEP-BY-STEP CONFLICT CHECK:
-  1. Write down your proposed start and end times
-  2. List ALL existing events with their FULL time ranges (start to end)
-  3. For each existing event, check: Does your time overlap with theirs?
-  4. If ANY overlap exists, use "multiple_actions" to rearrange the schedule
-
-CONFLICT DETECTION: When there's a time overlap, you MUST:
-- Clearly explain the specific overlap (which times conflict)
-- Automatically suggest a complete rearranged schedule using "multiple_actions" format
-- Provide a concrete solution that accommodates both the existing event and the new request
-- If user rejects the solution, offer a different complete rearrangement
-
-SOLUTION APPROACH: Always provide complete solutions, not questions:
-- Move the conflicting event to a logical alternative time
-- Include the new event at the requested time
-- Present as one unified schedule change using "multiple_actions"
-- Make the solution smart by considering time gaps, logical flow, and user preferences
-
-6. For event scheduling:
-   - Parse natural language to extract event title, date, and time
-   - Check for ACTUAL time conflicts (overlapping periods), not just same-day events
-   - If there's a conflict: explain the overlap clearly and automatically suggest a complete solution using "multiple_actions" format
-   - BEFORE suggesting any time, manually check if it overlaps with existing events by comparing start/end times
-   - If no conflict: suggest the requested time using "event_suggestion" format
-   - Default to 1 hour duration if not specified
-   - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
-   - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
-   - CRITICAL: Double-check your time arithmetic. If you calculate "11:30 AM + 3 hours = 2:30 PM", make sure your JSON shows "14:30:00" not "02:30:00"
-   - CRITICAL: 1 PM = 13:00, 2 PM = 14:00, etc. NEVER use 01:00 for 1 PM - that's 1 AM!
-   - EXAMPLES: 1pm-4pm = "13:00:00" to "16:00:00", 9am-12pm = "09:00:00" to "12:00:00"
-   - TIME CONVERSION CHART:
-     12am = 00:00, 1am = 01:00, 2am = 02:00... 11am = 11:00
-     12pm = 12:00, 1pm = 13:00, 2pm = 14:00, 3pm = 15:00, 4pm = 16:00, 5pm = 17:00... 11pm = 23:00
-   - ALWAYS double-check: if you say "3pm" in your text, JSON must show "15:00:00" NOT "03:00:00"
-   - NEVER create custom JSON types - only use "event_suggestion" or "event_rearrangement"
-   - CRITICAL: When there's a conflict, always provide a complete "multiple_actions" solution
-
-7. For event rearrangement:
-   - Identify which existing event the user wants to move
-   - Use the EXACT event ID from the context provided (shown as [ID:X] in the event listings above)
-   - Suggest new times that don't conflict with other events
-   - Preserve the event title and duration unless user specifies changes
-   - CRITICAL: Match the event title to the correct ID from the context - do not guess or use wrong IDs
-   - EXAMPLE: If user asks to modify "Flight Home", find "[ID:5] Flight Home" in the context and use eventId: 5
-   - IMPORTANT: Provide times in LOCAL format (${context.timezone}) in the JSON - the frontend will handle UTC conversion
-   - Use ISO format like "2025-05-27T18:00:00" (without Z suffix) for local times
-   - CRITICAL: Verify your time calculations. When moving events, ensure start and end times are both correctly calculated
-   - EXAMPLE: If moving a 30-minute event from 11:30 AM to 3:30 PM, JSON should show start: "2025-05-27T15:30:00", end: "2025-05-27T16:00:00"
-   - CRITICAL: event_rearrangement JSON MUST include newStart AND newEnd times - never provide incomplete JSON
-   - If you need to ask for more details about timing, provide NO JSON until you have specific times to suggest
-
-   - CRITICAL: When rescheduling due to conflict, use "multiple_actions" type to do both rearrangement AND add new event
-   - Format: {"type": "multiple_actions", "actions": [rearrangement_action, event_suggestion_action]}
-
-8. Be BRIEF and natural while providing accurate calendar information. Don't repeat information visible in the UI. Keep responses under 2 sentences when possible. 
-
-CRITICAL RULE: Only provide JSON for scheduling/rearranging events. For informational queries (availability, summaries, etc.), respond with text only - ABSOLUTELY NO JSON.
-
-Examples of when to use JSON: "schedule a meeting", "move my event", "reschedule the call"
-Examples of when NOT to use JSON: "what's tomorrow like?", "show my schedule", "how busy am I?"
-
-Always reference times in the user's local timezone (${context.timezone}). Use the chat history to provide contextual responses and remember what the user has asked about.
-
-Response:`;
+}`;
 }
 
 // Create a fallback response when Claude API is unavailable

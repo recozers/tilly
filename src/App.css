@@ -12,14 +12,14 @@
   flex: 1;
   padding: 20px;
   padding-right: 10px;
-  background-color: #f9fafb;
+  background-color: #f4f6f0;
   overflow: auto;
 }
 
 .ai-section {
   width: 350px;
-  border-left: 1px solid #e5e7eb;
-  background-color: #ffffff;
+  border-left: 1px solid #c8d5c4;
+  background-color: #fefdf9;
 }
 
 .calendar-header {
@@ -33,7 +33,7 @@
   margin: 0;
   font-size: 28px;
   font-weight: 700;
-  color: #1f2937;
+  color: #2d4a2b;
   letter-spacing: -0.02em;
 }
 
@@ -59,56 +59,56 @@
 }
 
 .today-btn {
-  background: linear-gradient(135deg, #9CAF88, #87A96B);
-  color: white;
+  background: linear-gradient(135deg, #4a6741, #6b8f62);
+  color: #fefdf9;
   font-weight: 600;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(156, 175, 136, 0.3);
+  box-shadow: 0 2px 4px rgba(74, 103, 65, 0.3);
   transition: all 0.2s ease;
   position: relative;
   padding: 10px 20px;
 }
 
 .today-btn:hover {
-  background: linear-gradient(135deg, #87A96B, #7A9B5F);
-  box-shadow: 0 4px 8px rgba(156, 175, 136, 0.4);
+  background: linear-gradient(135deg, #6b8f62, #87a072);
+  box-shadow: 0 4px 8px rgba(74, 103, 65, 0.4);
   transform: translateY(-1px);
 }
 
 .today-btn:active {
   transform: translateY(0);
-  box-shadow: 0 2px 4px rgba(156, 175, 136, 0.3);
+  box-shadow: 0 2px 4px rgba(74, 103, 65, 0.3);
 }
 
 .nav-btn {
   background-color: transparent;
-  color: #000000;
+  color: #2d4a2b;
   border: none;
   font-size: 24px;
   padding: 8px 16px;
 }
 
 .refresh-btn {
-  background-color: #4A7C2A;
-  color: white;
+  background-color: #4a6741;
+  color: #fefdf9;
 }
 
 .refresh-btn:disabled {
-  background-color: #9ca3af;
+  background-color: #8b9a87;
   cursor: not-allowed;
 }
 
 .import-btn {
-  background-color: #87A96B;
-  color: white;
+  background-color: #6b8f62;
+  color: #fefdf9;
 }
 
 .import-btn:hover:not(:disabled) {
-  background-color: #7A9B5F;
+  background-color: #4a6741;
 }
 
 .import-btn:disabled {
-  background-color: #9ca3af;
+  background-color: #8b9a87;
   cursor: not-allowed;
 }
 
@@ -126,8 +126,8 @@
   position: absolute;
   top: 100%;
   right: 0;
-  background-color: white;
-  border: 1px solid #e5e7eb;
+  background-color: #fefdf9;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   z-index: 100;
@@ -147,7 +147,7 @@
 }
 
 .import-options button:hover:not(:disabled) {
-  background-color: #f3f4f6;
+  background-color: #f4f6f0;
 }
 
 .import-options button:first-child {
@@ -161,27 +161,27 @@
 }
 
 .import-options button:disabled {
-  color: #9ca3af;
+  color: #8b9a87;
   cursor: not-allowed;
 }
 
 .error-message {
   margin-bottom: 20px;
   padding: 12px 16px;
-  background-color: #fef2f2;
-  border: 1px solid #fecaca;
+  background-color: #f8f0f0;
+  border: 1px solid #d4a6a6;
   border-radius: 8px;
-  color: #dc2626;
+  color: #8b4a47;
   font-size: 14px;
 }
 
 .success-message {
   margin-bottom: 20px;
   padding: 12px 16px;
-  background-color: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background-color: #eff4ed;
+  border: 1px solid #b8c7b3;
   border-radius: 8px;
-  color: #15803d;
+  color: #4a6741;
   font-size: 14px;
   position: relative;
 }
@@ -189,7 +189,7 @@
 .import-warnings {
   margin-top: 8px;
   font-size: 13px;
-  color: #ea580c;
+  color: #8b7355;
 }
 
 .close-message-btn {
@@ -200,7 +200,7 @@
   border: none;
   font-size: 18px;
   cursor: pointer;
-  color: #6b7280;
+  color: #8b9a87;
   padding: 0;
   width: 20px;
   height: 20px;
@@ -210,7 +210,7 @@
 }
 
 .close-message-btn:hover {
-  color: #374151;
+  color: #5a6b57;
 }
 
 .modal-overlay {
@@ -227,7 +227,7 @@
 }
 
 .modal-content {
-  background-color: white;
+  background-color: #fefdf9;
   border-radius: 12px;
   padding: 24px;
   width: 500px;
@@ -245,7 +245,7 @@
 
 .modal-content p {
   margin: 0 0 16px 0;
-  color: #6b7280;
+  color: #5a6b57;
 }
 
 .url-input-container {
@@ -255,20 +255,22 @@
 .url-input {
   width: 100%;
   padding: 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   font-size: 14px;
+  background: #fefdf9;
+  color: #2d4a2b;
 }
 
 .url-input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #4a6741;
+  box-shadow: 0 0 0 3px rgba(74, 103, 65, 0.1);
 }
 
 .modal-help {
-  background-color: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background-color: #f4f6f0;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 20px;
@@ -278,7 +280,7 @@
 .modal-help strong {
   display: block;
   margin-bottom: 8px;
-  color: #374151;
+  color: #2d4a2b;
 }
 
 .modal-help ul {
@@ -288,7 +290,7 @@
 
 .modal-help li {
   margin-bottom: 4px;
-  color: #6b7280;
+  color: #5a6b57;
 }
 
 .modal-actions {
@@ -314,13 +316,13 @@
 }
 
 .import-url-btn:disabled {
-  background-color: #9ca3af;
+  background-color: #8b9a87;
   cursor: not-allowed;
 }
 
 .cancel-btn {
-  background-color: #6b7280;
-  color: white;
+  background-color: #8b9a87;
+  color: #fefdf9;
   border: none;
   padding: 10px 20px;
   border-radius: 6px;
@@ -331,18 +333,19 @@
 }
 
 .cancel-btn:hover:not(:disabled) {
-  background-color: #4b5563;
+  background-color: #5a6b57;
 }
 
 .calendar-container {
-  background: white;
+  background: #fefdf9;
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e5e7eb;
+  border: 1px solid #c8d5c4;
   overflow: hidden;
 }
 
-.event-creation-modal {
+.event-creation-modal,
+.event-confirmation-modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -356,7 +359,7 @@
 }
 
 .event-creation-content {
-  background-color: white;
+  background-color: #fefdf9;
   border-radius: 12px;
   padding: 24px;
   width: 400px;
@@ -367,11 +370,12 @@
   margin: 0 0 16px 0;
   font-size: 18px;
   font-weight: 600;
+  color: #2d4a2b;
 }
 
 .event-creation-content p {
   margin: 0 0 16px 0;
-  color: #6b7280;
+  color: #5a6b57;
   font-size: 14px;
 }
 
@@ -390,22 +394,22 @@
 }
 
 .event-creation-buttons button:first-child {
-  background-color: #6b7280;
-  color: white;
+  background-color: #8b9a87;
+  color: #fefdf9;
 }
 
 .event-creation-buttons button:last-child {
-  background-color: #3b82f6;
-  color: white;
+  background-color: #4a6741;
+  color: #fefdf9;
 }
 
 /* Subscription Option Styles */
 .subscription-option {
   margin: 15px 0;
   padding: 15px;
-  background: #f8f9fa;
+  background: #f4f6f0;
   border-radius: 8px;
-  border: 1px solid #e9ecef;
+  border: 1px solid #c8d5c4;
 }
 
 .checkbox-label {
@@ -428,36 +432,38 @@
 
 .checkbox-label strong {
   display: block;
-  color: #1a73e8;
+  color: #4a6741;
   margin-bottom: 4px;
 }
 
 .checkbox-label small {
   display: block;
-  color: #6c757d;
+  color: #8b9a87;
   line-height: 1.3;
 }
 
 .subscription-name-input {
   width: 100%;
   padding: 10px;
-  border: 1px solid #ddd;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   margin-top: 10px;
   font-size: 14px;
+  background: #fefdf9;
+  color: #2d4a2b;
 }
 
 .subscription-name-input:focus {
   outline: none;
-  border-color: #1a73e8;
-  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  border-color: #4a6741;
+  box-shadow: 0 0 0 3px rgba(74, 103, 65, 0.1);
 }
 
 /* Subscription Management Modal */
 .no-subscriptions {
   text-align: center;
   padding: 40px 20px;
-  color: #6c757d;
+  color: #8b9a87;
 }
 
 .no-subscriptions p {
@@ -475,10 +481,10 @@
   justify-content: space-between;
   align-items: flex-start;
   padding: 15px;
-  border: 1px solid #e9ecef;
+  border: 1px solid #c8d5c4;
   border-radius: 8px;
   margin-bottom: 10px;
-  background: white;
+  background: #fefdf9;
 }
 
 .subscription-info {
@@ -495,13 +501,13 @@
 .subscription-url {
   margin: 0 0 8px 0;
   font-size: 12px;
-  color: #6c757d;
+  color: #8b9a87;
   word-break: break-all;
   line-height: 1.3;
 }
 
 .subscription-info small {
-  color: #6c757d;
+  color: #8b9a87;
   font-size: 11px;
 }
 
@@ -521,27 +527,27 @@
 }
 
 .sync-btn {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #eff4ed;
+  color: #4a6741;
 }
 
 .sync-btn:hover {
-  background: #bbdefb;
+  background: #f4f6f0;
 }
 
 .delete-btn {
-  background: #ffebee;
-  color: #d32f2f;
+  background: #f8f0f0;
+  color: #8b4a47;
 }
 
 .delete-btn:hover {
-  background: #ffcdd2;
+  background: #f4ebeb;
 }
 
 /* Enhanced Import Button Styles for Modal */
 .modal-content .import-btn {
-  background: #87A96B;
-  color: white;
+  background: #6b8f62;
+  color: #fefdf9;
   border: none;
   padding: 12px 20px;
   border-radius: 6px;
@@ -554,12 +560,12 @@
 }
 
 .modal-content .import-btn:hover:not(:disabled) {
-  background: #7A9B5F;
+  background: #4a6741;
   transform: translateY(-1px);
 }
 
 .modal-content .import-btn:disabled {
-  background: #ccc;
+  background: #8b9a87;
   cursor: not-allowed;
   transform: none;
 }
@@ -567,7 +573,7 @@
 /* Tab Styles for Import Modal */
 .import-tabs {
   display: flex;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid #c8d5c4;
   margin-bottom: 20px;
 }
 
@@ -578,19 +584,19 @@
   border: none;
   cursor: pointer;
   font-size: 14px;
-  color: #6c757d;
+  color: #5a6b57;
   transition: all 0.2s;
   border-bottom: 2px solid transparent;
 }
 
 .tab-btn:hover {
-  color: #87A96B;
-  background: #f8f9fa;
+  color: #4a6741;
+  background: #f4f6f0;
 }
 
 .tab-btn.active {
-  color: #87A96B;
-  border-bottom-color: #87A96B;
+  color: #4a6741;
+  border-bottom-color: #4a6741;
   font-weight: 500;
 }
 
@@ -600,7 +606,7 @@
 
 /* URL Import Help Styles */
 .url-import-help {
-  background: #f8f9fa;
+  background: #f4f6f0;
   padding: 15px;
   border-radius: 8px;
   margin-bottom: 20px;
@@ -631,17 +637,19 @@
 
 .help-section li {
   margin-bottom: 2px;
-  color: #6c757d;
+  color: #8b9a87;
 }
 
 /* URL Input Styles */
 .url-input {
   width: 100%;
   padding: 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   font-size: 14px;
   margin-bottom: 10px;
+  background: #fefdf9;
+  color: #2d4a2b;
 }
 
 .url-input:focus {
@@ -659,8 +667,8 @@
   position: absolute;
   top: 100%;
   right: 0;
-  background: white;
-  border: 1px solid #e9ecef;
+  background: #fefdf9;
+  border: 1px solid #c8d5c4;
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   z-index: 1000;
@@ -677,24 +685,24 @@
   border: none;
   cursor: pointer;
   font-size: 14px;
-  color: #374151;
+  color: #2d4a2b;
   transition: background-color 0.2s;
 }
 
 .import-dropdown-menu button:hover {
-  background: #f3f4f6;
+  background: #f4f6f0;
 }
 
 .import-dropdown-menu button:not(:last-child) {
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid #c8d5c4;
 }
 
 .import-dropdown-menu button:last-child {
-  color: #87A96B;
+  color: #4a6741;
 }
 
 .import-dropdown-menu button:last-child:hover {
-  background: #f0f7ed;
+  background: #eff4ed;
 }
 
 /* User Authentication Styles */
@@ -760,7 +768,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: white;
+  background: #fefdf9;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -787,7 +795,7 @@
 }
 
 .auth-loading-content p {
-  color: #6b7280;
+  color: #5a6b57;
   font-size: 16px;
   margin: 0;
 }
@@ -798,13 +806,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #9CAF88 0%, #7A9B5F 100%);
+  background: linear-gradient(135deg, #4a6741 0%, #6b8f62 100%);
   padding: 20px;
 }
 
 .auth-prompt {
   text-align: center;
-  background: white;
+  background: #fefdf9;
   padding: 60px 40px;
   border-radius: 20px;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
@@ -815,9 +823,9 @@
 .auth-prompt h1 {
   font-size: 48px;
   font-weight: 700;
-  color: #1f2937;
+  color: #2d4a2b;
   margin: 0 0 16px 0;
-  background: linear-gradient(135deg, #9CAF88, #87A96B);
+  background: linear-gradient(135deg, #4a6741, #6b8f62);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -825,14 +833,14 @@
 
 .auth-prompt p {
   font-size: 20px;
-  color: #6b7280;
+  color: #5a6b57;
   margin: 0 0 40px 0;
   line-height: 1.6;
 }
 
 .get-started-btn {
-  background: linear-gradient(135deg, #9CAF88, #87A96B);
-  color: white;
+  background: linear-gradient(135deg, #4a6741, #6b8f62);
+  color: #fefdf9;
   border: none;
   padding: 16px 32px;
   border-radius: 12px;
@@ -840,12 +848,12 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 8px 16px rgba(156, 175, 136, 0.3);
+  box-shadow: 0 8px 16px rgba(74, 103, 65, 0.3);
 }
 
 .get-started-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 20px rgba(156, 175, 136, 0.4);
+  box-shadow: 0 12px 20px rgba(74, 103, 65, 0.4);
 }
 
 .get-started-btn:active {

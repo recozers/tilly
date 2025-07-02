@@ -1486,6 +1486,327 @@ CONFLICT RESOLUTION STRATEGY:
   }
 });
 
+// New streamlined AI chat endpoint - much faster and smarter
+app.post('/api/ai/smart-chat', authenticateUser, async (req, res) => {
+  try {
+    const { message, currentEvents = [], userTimeZone = 'Europe/London' } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // Create context from recent events for Haiku
+    const eventsContext = currentEvents.length > 0 
+      ? `Recent events: ${currentEvents.map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}`
+      : 'No recent events';
+    
+    // First, classify the request complexity
+    const requestType = classifyRequest(message);
+    
+    if (requestType === 'complex') {
+      // Use tool-based approach for complex queries
+      return await handleComplexRequest(message, currentEvents, userTimeZone, req, res);
+    }
+    
+    // Smart prompt for simple requests - fast direct parsing
+    const smartPrompt = `You are Tilly, a friendly calendar assistant. Current time: ${new Date().toLocaleString()} (${userTimeZone}).
+
+${eventsContext}
+
+For simple calendar requests, respond naturally and include ONE of these action types:
+
+CREATE_EVENT: {title: "Event Name", date: "YYYY-MM-DD", time: "HH:MM", duration: minutes}
+MOVE_EVENT: {eventTitle: "Existing Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}
+LIST_EVENTS: {date: "YYYY-MM-DD"} or {range: "week/month"}
+
+If the request is complex (searching, analyzing patterns, finding specific meetings), respond with: NEEDS_TOOLS: {reason: "explanation"}
+
+Be conversational and helpful. If creating events, suggest reasonable defaults.
+
+User: ${message}
+Assistant:`;
+
+    console.log('🤖 Making streamlined Haiku request...');
+    
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 500,
+        messages: [{ role: 'user', content: smartPrompt }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Haiku API request failed: ${response.status}`);
+    }
+
+    const aiData = await response.json();
+    const aiResponse = aiData.content[0].text;
+    
+    // Parse action suggestions from AI response
+    const suggestions = parseActionSuggestions(aiResponse, userTimeZone);
+    
+    res.json({
+      response: aiResponse,
+      suggestions: suggestions,
+      success: true
+    });
+
+  } catch (error) {
+    console.error('Error in smart chat:', error);
+    res.status(500).json({ 
+      error: 'Failed to process AI request',
+      details: error.message 
+    });
+  }
+});
+
+// Classify request complexity to decide between fast parsing vs tools
+function classifyRequest(message) {
+  const complexPatterns = [
+    /when (did|was|have) i (last|previously|before)/i,
+    /how many (times|meetings|events)/i,
+    /find (all|events|meetings) (with|containing|about)/i,
+    /show me (all|events|meetings) (with|from|containing)/i,
+    /search (for|my calendar)/i,
+    /what meetings did i have/i,
+    /analyze my (schedule|calendar)/i,
+    /pattern of (meetings|events)/i,
+    /busiest (day|week|month)/i,
+    /free time (analysis|between)/i,
+    /overlap(ping)? (meetings|events)/i,
+    /recurring (meetings|events)/i
+  ];
+  
+  return complexPatterns.some(pattern => pattern.test(message)) ? 'complex' : 'simple';
+}
+
+// Handle complex requests using tools
+async function handleComplexRequest(message, currentEvents, userTimeZone, req, res) {
+  try {
+    console.log('🔍 Handling complex request with tools...');
+    
+    // Define tools for complex analysis
+    const complexTools = [
+      {
+        name: "search_events",
+        description: "Search calendar events by title, participant, date range, or other criteria",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+            end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+            participant: { type: "string", description: "Person's name to search for" }
+          }
+        }
+      },
+      {
+        name: "analyze_schedule",
+        description: "Analyze calendar patterns, frequency, busy periods",
+        input_schema: {
+          type: "object", 
+          properties: {
+            analysis_type: { type: "string", enum: ["frequency", "busy_periods", "patterns", "conflicts"] },
+            date_range: { type: "string", description: "Date range to analyze" }
+          }
+        }
+      },
+      {
+        name: "get_calendar_events",
+        description: "Get calendar events for a specific date range",
+        input_schema: {
+          type: "object",
+          properties: {
+            start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+            end_date: { type: "string", description: "End date (YYYY-MM-DD)" }
+          }
+        }
+      }
+    ];
+
+    const complexPrompt = `You are Tilly, a calendar assistant with advanced analysis capabilities. Current time: ${new Date().toLocaleString()} (${userTimeZone}).
+
+Recent events: ${currentEvents.map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}
+
+The user has asked a complex question that requires searching or analyzing their calendar. Use the available tools to help answer their question thoroughly.
+
+User: ${message}
+Assistant:`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: complexPrompt }],
+        tools: complexTools
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Haiku API request failed: ${response.status}`);
+    }
+
+    const claudeData = await response.json();
+    
+    // Check if Claude wants to use tools
+    const hasToolUse = claudeData.content.some(content => content.type === 'tool_use');
+    
+    if (hasToolUse) {
+      console.log('🔧 Claude wants to use tools for complex query...');
+      
+      // Execute tools and get final response
+      const toolResults = [];
+      for (const content of claudeData.content) {
+        if (content.type === 'tool_use') {
+          let result;
+          try {
+            switch (content.name) {
+              case 'search_events':
+                result = await executeSearchEvents(content.input, req);
+                break;
+              case 'analyze_schedule':
+                result = await executeAnalyzeSchedule(content.input, req);
+                break;
+              case 'get_calendar_events':
+                result = await executeGetCalendarEvents(content.input, req);
+                break;
+              default:
+                result = { success: false, error: `Unknown tool: ${content.name}` };
+            }
+          } catch (error) {
+            result = { success: false, error: error.message };
+          }
+          
+          toolResults.push({
+            tool_use_id: content.id,
+            type: 'tool_result',
+            content: JSON.stringify(result)
+          });
+        }
+      }
+      
+      // Get final response from Claude with tool results
+      const finalResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 1000,
+          messages: [
+            { role: 'user', content: complexPrompt },
+            { role: 'assistant', content: claudeData.content },
+            { role: 'user', content: toolResults }
+          ]
+        })
+      });
+      
+      const finalData = await finalResponse.json();
+      const finalText = finalData.content.map(c => c.text).join('');
+      
+      return res.json({
+        response: finalText,
+        suggestions: [], // Complex queries don't need action buttons
+        isComplex: true,
+        success: true
+      });
+    } else {
+      // No tools needed, return direct response
+      const responseText = claudeData.content.map(c => c.text).join('');
+      return res.json({
+        response: responseText,
+        suggestions: [],
+        isComplex: true,
+        success: true
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error in complex request:', error);
+    return res.status(500).json({
+      error: 'Failed to process complex request',
+      details: error.message
+    });
+  }
+}
+
+// Parse action suggestions from AI response text
+function parseActionSuggestions(aiResponse, userTimeZone) {
+  const suggestions = [];
+  
+  // Look for CREATE_EVENT pattern
+  const createMatch = aiResponse.match(/CREATE_EVENT:\s*{([^}]+)}/);
+  if (createMatch) {
+    try {
+      const eventData = parseEventData(createMatch[1]);
+      if (eventData.title && eventData.date) {
+        suggestions.push({
+          type: 'create_event',
+          title: eventData.title,
+          date: eventData.date,
+          time: eventData.time || '09:00',
+          duration: eventData.duration || 60,
+          buttonText: `Create "${eventData.title}"`
+        });
+      }
+    } catch (e) {
+      console.log('Failed to parse CREATE_EVENT:', e);
+    }
+  }
+  
+  // Look for MOVE_EVENT pattern  
+  const moveMatch = aiResponse.match(/MOVE_EVENT:\s*{([^}]+)}/);
+  if (moveMatch) {
+    try {
+      const moveData = parseEventData(moveMatch[1]);
+      if (moveData.eventTitle) {
+        suggestions.push({
+          type: 'move_event',
+          eventTitle: moveData.eventTitle,
+          newDate: moveData.newDate,
+          newTime: moveData.newTime,
+          buttonText: `Move "${moveData.eventTitle}"`
+        });
+      }
+    } catch (e) {
+      console.log('Failed to parse MOVE_EVENT:', e);
+    }
+  }
+  
+  return suggestions;
+}
+
+// Helper to parse event data from string
+function parseEventData(dataStr) {
+  const data = {};
+  const pairs = dataStr.split(',');
+  
+  pairs.forEach(pair => {
+    const [key, value] = pair.split(':').map(s => s.trim());
+    if (key && value) {
+      data[key] = value.replace(/"/g, '');
+    }
+  });
+  
+  return data;
+}
+
 // Execute AI suggested tools endpoint
 app.post('/api/ai/execute-tools', authenticateUser, async (req, res) => {
   try {
@@ -1550,6 +1871,145 @@ app.post('/api/ai/execute-tools', authenticateUser, async (req, res) => {
     });
   }
 });
+
+// New tool functions for complex queries
+async function executeSearchEvents(input, req) {
+  try {
+    const { query, start_date, end_date, participant } = input;
+    
+    console.log(`🔍 Searching events with query: "${query}", participant: "${participant}"`);
+    
+    // Get events in the specified range or default to last 3 months
+    const startDate = start_date ? new Date(start_date) : new Date(new Date().setMonth(new Date().getMonth() - 3));
+    const endDate = end_date ? new Date(end_date) : new Date();
+    
+    const events = await getEventsByDateRange(startDate, endDate, req.userId, req.supabase);
+    
+    // Filter events based on search criteria
+    let filteredEvents = events;
+    
+    if (query) {
+      filteredEvents = filteredEvents.filter(event => 
+        event.title.toLowerCase().includes(query.toLowerCase()) ||
+        (event.description && event.description.toLowerCase().includes(query.toLowerCase()))
+      );
+    }
+    
+    if (participant) {
+      filteredEvents = filteredEvents.filter(event =>
+        event.title.toLowerCase().includes(participant.toLowerCase()) ||
+        (event.description && event.description.toLowerCase().includes(participant.toLowerCase()))
+      );
+    }
+    
+    if (filteredEvents.length === 0) {
+      return { 
+        success: true, 
+        message: `No events found matching your search criteria.`,
+        events: []
+      };
+    }
+    
+    const eventsList = filteredEvents.map(e => ({
+      title: e.title,
+      date: e.start.toLocaleDateString(),
+      time: e.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      id: e.id
+    }));
+    
+    return { 
+      success: true, 
+      message: `Found ${filteredEvents.length} events matching your search.`,
+      events: eventsList
+    };
+    
+  } catch (error) {
+    console.error('Error searching events:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function executeAnalyzeSchedule(input, req) {
+  try {
+    const { analysis_type, date_range } = input;
+    
+    console.log(`📊 Analyzing schedule: ${analysis_type} for ${date_range}`);
+    
+    // Default to last month for analysis
+    const endDate = new Date();
+    const startDate = new Date();
+    
+    if (date_range === 'week') {
+      startDate.setDate(endDate.getDate() - 7);
+    } else if (date_range === 'month') {
+      startDate.setMonth(endDate.getMonth() - 1);
+    } else {
+      startDate.setMonth(endDate.getMonth() - 1); // default to month
+    }
+    
+    const events = await getEventsByDateRange(startDate, endDate, req.userId, req.supabase);
+    
+    let analysis = {};
+    
+    switch (analysis_type) {
+      case 'frequency':
+        const eventsByDay = {};
+        events.forEach(event => {
+          const day = event.start.toDateString();
+          eventsByDay[day] = (eventsByDay[day] || 0) + 1;
+        });
+        
+        const avgPerDay = events.length / Object.keys(eventsByDay).length;
+        analysis = {
+          total_events: events.length,
+          average_per_day: Math.round(avgPerDay * 100) / 100,
+          busiest_day: Object.entries(eventsByDay).sort((a, b) => b[1] - a[1])[0]
+        };
+        break;
+        
+      case 'busy_periods':
+        const hourCounts = {};
+        events.forEach(event => {
+          const hour = event.start.getHours();
+          hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+        });
+        
+        const busiestHour = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+        analysis = {
+          busiest_hour: busiestHour ? `${busiestHour[0]}:00` : 'No data',
+          hour_distribution: hourCounts
+        };
+        break;
+        
+      case 'patterns':
+        const dayOfWeekCounts = {};
+        events.forEach(event => {
+          const dayOfWeek = event.start.toLocaleDateString('en-US', { weekday: 'long' });
+          dayOfWeekCounts[dayOfWeek] = (dayOfWeekCounts[dayOfWeek] || 0) + 1;
+        });
+        
+        analysis = {
+          events_by_weekday: dayOfWeekCounts,
+          total_events: events.length
+        };
+        break;
+        
+      default:
+        analysis = { message: 'Analysis type not supported' };
+    }
+    
+    return { 
+      success: true, 
+      analysis_type,
+      date_range,
+      data: analysis
+    };
+    
+  } catch (error) {
+    console.error('Error analyzing schedule:', error);
+    return { success: false, error: error.message };
+  }
+}
 
 // Tool execution functions - call directly instead of HTTP requests to avoid loops
 async function executeGetCalendarEvents(input, req) {

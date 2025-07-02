@@ -457,72 +457,75 @@ const App = () => {
     setPendingEventData(null)
   }
 
-  // Handle AI suggestion confirmation
-  const handleAIConfirm = async (messageId, originalTools) => {
-    console.log('🔍 AI Confirm called with tools:', originalTools) // Debug log
-    
-    if (!originalTools || !Array.isArray(originalTools)) {
-      console.error('❌ No tools to execute')
-      return
-    }
-    
+
+  // Handle smart action execution
+  const handleSmartAction = async (suggestion) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`
-      }
+      if (suggestion.type === 'create_event') {
+        // Create event directly using eventsApi
+        const startDate = new Date(`${suggestion.date}T${suggestion.time}:00`);
+        const endDate = new Date(startDate.getTime() + (suggestion.duration * 60000));
+        
+        const newEvent = await eventsApi.createEvent({
+          title: suggestion.title,
+          start: startDate,
+          end: endDate,
+          color: '#4A7C2A'
+        });
 
-      // Execute the original tools
-      const response = await fetch('/api/ai/execute-tools', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ 
-          tools: originalTools,
-          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-        }),
-      })
-
-      if (response.ok) {
-        const result = await response.json()
+        setEvents(prev => [...prev, newEvent]);
         
         // Add success message
         const successMessage = {
           id: Date.now().toString(),
-          text: "✅ Calendar updated successfully!",
+          text: `✅ Created "${suggestion.title}" for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           sender: 'bot',
           timestamp: new Date(),
           isSuccess: true
-        }
-        setMessages(prev => [...prev, successMessage])
+        };
+        setMessages(prev => [...prev, successMessage]);
         
-        // Refresh calendar
-        await loadEvents()
-      } else {
-        throw new Error('Failed to execute tools')
+      } else if (suggestion.type === 'move_event') {
+        // Find and move existing event
+        const existingEvent = events.find(e => 
+          e.title.toLowerCase().includes(suggestion.eventTitle.toLowerCase())
+        );
+        
+        if (existingEvent) {
+          const newStart = new Date(`${suggestion.newDate}T${suggestion.newTime}:00`);
+          const duration = new Date(existingEvent.end) - new Date(existingEvent.start);
+          const newEnd = new Date(newStart.getTime() + duration);
+          
+          const updatedEvent = await eventsApi.updateEvent(existingEvent.id, {
+            start: newStart,
+            end: newEnd
+          });
+          
+          setEvents(prev => prev.map(e => e.id === existingEvent.id ? updatedEvent : e));
+          
+          const successMessage = {
+            id: Date.now().toString(),
+            text: `✅ Moved "${existingEvent.title}" to ${newStart.toLocaleDateString()} at ${newStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            sender: 'bot',
+            timestamp: new Date(),
+            isSuccess: true
+          };
+          setMessages(prev => [...prev, successMessage]);
+        } else {
+          throw new Error(`Could not find event "${suggestion.eventTitle}"`);
+        }
       }
     } catch (error) {
-      console.error('Error executing AI tools:', error)
+      console.error('Error executing smart action:', error);
       const errorMessage = {
         id: Date.now().toString(),
-        text: "❌ Sorry, there was an error updating your calendar. Please try again.",
+        text: `❌ Failed to ${suggestion.type.replace('_', ' ')}: ${error.message}`,
         sender: 'bot',
         timestamp: new Date(),
         isError: true
-      }
-      setMessages(prev => [...prev, errorMessage])
+      };
+      setMessages(prev => [...prev, errorMessage]);
     }
-  }
-
-  // Handle AI suggestion cancel
-  const handleAICancel = (messageId) => {
-    const cancelMessage = {
-      id: Date.now().toString(),
-      text: "No changes made to your calendar. Is there anything else I can help you with?",
-      sender: 'bot',
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, cancelMessage])
   }
 
 
@@ -980,15 +983,14 @@ const App = () => {
         'Authorization': `Bearer ${session?.access_token}`
       }
 
-      // Use AI endpoint in suggestion mode first to avoid latency
-      const response = await fetch('/api/ai/chat', {
+      // Use new streamlined AI endpoint
+      const response = await fetch('/api/ai/smart-chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
           message: messageText,
-          chatHistory: chatHistory,
-          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          suggestionMode: true // Don't execute tools, just return suggestions
+          currentEvents: events.slice(0, 10), // Send recent events for context
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
         }),
       })
 
@@ -997,68 +999,16 @@ const App = () => {
       }
 
       const data = await response.json()
-      console.log('🔍 AI Response:', data) // Debug log
       
-      // Check if AI wants to create/modify events
-      const hasEventActions = data.suggestedTools && data.suggestedTools.some(tool => 
-        ['create_event', 'move_event'].includes(tool.name)
-      )
-      console.log('🔍 Has event actions:', hasEventActions) // Debug log
-      
-      let botResponseText = data.response
-      let botMessage
-      
-      if (hasEventActions) {
-        console.log('🔍 Processing event actions:', data.suggestedTools) // Debug log
-        // Convert suggested tools to EventConfirmation format
-        const actions = data.suggestedTools.filter(tool => 
-          ['create_event', 'move_event'].includes(tool.name)
-        ).map(tool => {
-          if (tool.name === 'create_event') {
-            return {
-              type: 'event_suggestion',
-              eventData: {
-                title: tool.input.title,
-                start: new Date(tool.input.start_time).toISOString(),
-                end: new Date(tool.input.end_time).toISOString()
-              }
-            }
-          } else if (tool.name === 'move_event') {
-            return {
-              type: 'event_rearrangement', 
-              rearrangements: [{
-                eventId: tool.input.event_id,
-                currentTitle: tool.input.new_title || 'Event',
-                newStart: new Date(tool.input.new_start_time).toISOString(),
-                newEnd: new Date(tool.input.new_end_time).toISOString()
-              }]
-            }
-          }
-        })
-        
-        // Show bot message with confirmation UI
-        botMessage = {
-          id: (Date.now() + 1).toString(),
-          text: botResponseText,
-          sender: 'bot',
-          timestamp: new Date(),
-          needsConfirmation: true,
-          responseData: {
-            type: actions.length === 1 ? actions[0].type : 'multiple_actions',
-            ...(actions.length === 1 ? actions[0] : { actions }),
-            message: botResponseText
-          },
-          originalTools: data.suggestedTools // Store for execution later
-        }
-        console.log('🔍 Created bot message with confirmation:', botMessage) // Debug log
-      } else {
-        // Regular response without event actions
-        botMessage = {
-          id: (Date.now() + 1).toString(),
-          text: botResponseText,
-          sender: 'bot',
-          timestamp: new Date(),
-        }
+      // Create bot message with appropriate UI based on response type
+      const botMessage = {
+        id: (Date.now() + 1).toString(),
+        text: data.response,
+        sender: 'bot',
+        timestamp: new Date(),
+        suggestions: data.suggestions || [], // Smart action suggestions for simple requests
+        isComplex: data.isComplex || false, // Mark complex queries differently
+        isStreaming: false
       }
       
       setMessages(currentMessages => [...currentMessages, botMessage])
@@ -2112,28 +2062,64 @@ const App = () => {
                     style={{
                       padding: '12px',
                       borderRadius: '12px',
-                      maxWidth: '85%',
+                      maxWidth: message.isComplex ? '95%' : '85%', // Wider for complex responses
                       wordWrap: 'break-word',
                       marginLeft: message.sender === 'user' ? 'auto' : '0',
                       marginRight: message.sender === 'user' ? '0' : 'auto',
-                      backgroundColor: message.sender === 'user' ? '#87A96B' : '#f3f4f6',
-                      color: message.sender === 'user' ? 'white' : '#1f2937',
+                      backgroundColor: message.isSuccess ? '#d1fae5' : 
+                                     message.isError ? '#fee2e2' : 
+                                     message.isComplex ? '#f0f9ff' : // Light blue for complex queries
+                                     message.sender === 'user' ? '#87A96B' : '#f3f4f6',
+                      color: message.isSuccess ? '#065f46' :
+                             message.isError ? '#dc2626' :
+                             message.isComplex ? '#0c4a6e' : // Darker blue for complex queries
+                             message.sender === 'user' ? 'white' : '#1f2937',
                       fontSize: '14px',
-                      lineHeight: '1.4'
+                      lineHeight: '1.4',
+                      border: message.isSuccess ? '1px solid #a7f3d0' :
+                              message.isError ? '1px solid #fca5a5' : 
+                              message.isComplex ? '1px solid #bae6fd' : 'none' // Blue border for complex queries
                     }}
                   >
                     {message.text}
                   </div>
                   
-                  {/* Show EventConfirmation for AI messages that need confirmation */}
-                  {message.needsConfirmation && message.responseData && (
-                    <div style={{ marginTop: '8px' }}>
-                      {console.log('🔍 Rendering EventConfirmation for message:', message.id)} {/* Debug log */}
-                      <EventConfirmation
-                        responseData={message.responseData}
-                        onConfirm={() => handleAIConfirm(message.id, message.originalTools)}
-                        onCancel={() => handleAICancel(message.id)}
-                      />
+                  {/* Show smart action buttons for AI suggestions */}
+                  {message.suggestions && message.suggestions.length > 0 && (
+                    <div style={{ 
+                      marginTop: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}>
+                      {message.suggestions.map((suggestion, index) => (
+                        <button
+                          key={index}
+                          onClick={() => handleSmartAction(suggestion)}
+                          style={{
+                            background: 'linear-gradient(135deg, #4a6741 0%, #6b8f62 100%)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '10px 16px',
+                            fontSize: '14px',
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            boxShadow: '0 2px 4px rgba(74, 103, 65, 0.2)'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.transform = 'translateY(-1px)';
+                            e.target.style.boxShadow = '0 4px 8px rgba(74, 103, 65, 0.3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.transform = 'translateY(0)';
+                            e.target.style.boxShadow = '0 2px 4px rgba(74, 103, 65, 0.2)';
+                          }}
+                        >
+                          {suggestion.buttonText}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

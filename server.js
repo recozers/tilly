@@ -1489,27 +1489,38 @@ CONFLICT RESOLUTION STRATEGY:
 // New streamlined AI chat endpoint - much faster and smarter
 app.post('/api/ai/smart-chat', authenticateUser, async (req, res) => {
   try {
-    const { message, currentEvents = [], userTimeZone = 'Europe/London' } = req.body;
+    const { message, chatHistory = [], userTimeZone = 'Europe/London' } = req.body;
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Create rich context from current events
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const todaysEvents = currentEvents.filter(e => {
+    // Fetch current week's events from database for accurate context
+    const today = new Date();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
+    
+    console.log(`📅 Fetching events for current week: ${startOfWeek.toISOString().split('T')[0]} to ${endOfWeek.toISOString().split('T')[0]}`);
+    
+    const weekEvents = await getEventsByDateRange(startOfWeek, endOfWeek, req.userId, req.supabase);
+    
+    // Create rich context from current week's events
+    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const todaysEvents = weekEvents.filter(e => {
       const eventDate = new Date(e.start).toISOString().split('T')[0];
-      return eventDate === today;
+      return eventDate === todayStr;
     });
     
     const tomorrowDate = new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0];
-    const tomorrowEvents = currentEvents.filter(e => {
+    const tomorrowEvents = weekEvents.filter(e => {
       const eventDate = new Date(e.start).toISOString().split('T')[0];
       return eventDate === tomorrowDate;
     });
     
     const eventsContext = `
-TODAY (${today}): ${todaysEvents.length > 0 
+TODAY (${todayStr}): ${todaysEvents.length > 0 
   ? todaysEvents.map(e => `"${e.title}" at ${new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`).join(', ')
   : 'No events scheduled'}
 
@@ -1517,7 +1528,7 @@ TOMORROW (${tomorrowDate}): ${tomorrowEvents.length > 0
   ? tomorrowEvents.map(e => `"${e.title}" at ${new Date(e.start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`).join(', ')  
   : 'No events scheduled'}
 
-Recent events: ${currentEvents.slice(0, 5).map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}`;
+THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}`;
     
     // First, classify the request complexity
     const requestType = classifyRequest(message);
@@ -1525,13 +1536,18 @@ Recent events: ${currentEvents.slice(0, 5).map(e => `"${e.title}" on ${new Date(
     
     if (requestType === 'complex') {
       // Use tool-based approach for complex queries
-      return await handleComplexRequest(message, currentEvents, userTimeZone, req, res);
+      return await handleComplexRequest(message, weekEvents, userTimeZone, req, res);
     }
+    
+    // Add conversation history for context
+    const conversationHistory = chatHistory.length > 0 
+      ? `\nRecent conversation:\n${chatHistory.slice(-3).map(msg => `${msg.sender}: ${msg.text}`).join('\n')}\n`
+      : '';
     
     // Optimized prompt for speed and clarity - place action at end
     const smartPrompt = `Calendar Assistant. Time: ${new Date().toLocaleString()} (${userTimeZone})
 
-${eventsContext}
+${eventsContext}${conversationHistory}
 
 User: ${message}
 

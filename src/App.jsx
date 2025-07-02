@@ -983,13 +983,13 @@ const App = () => {
         'Authorization': `Bearer ${session?.access_token}`
       }
 
-      // Use new streamlined AI endpoint
+      // Use new streamlined AI endpoint with chat history
       const response = await fetch('/api/ai/smart-chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
           message: messageText,
-          currentEvents: events.slice(0, 10), // Send recent events for context
+          chatHistory: messages.slice(-5), // Send last 5 messages for context
           userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
         }),
       })

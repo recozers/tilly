@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const { RRule, RRuleSet, rrulestr } = require('rrule');
 require('dotenv').config();
+const { Buffer } = require('buffer');
 
 // Import Supabase functions instead of SQLite
 const {
@@ -21,6 +22,7 @@ const {
   importEvents,
   addCalendarSubscription,
   getCalendarSubscriptions,
+  getAllCalendarSubscriptionsForAutoSync,
   updateCalendarSync,
   deleteCalendarSubscription,
   importEventsFromSubscription,
@@ -303,6 +305,18 @@ const upload = multer({
   }
 });
 
+// Calendar colors - green and cream
+const CALENDAR_COLORS = {
+  GREEN: '#4A7C2A',
+  CREAM: '#F4F1E8'
+}
+
+// Randomly select between green and cream colors
+const getRandomEventColor = () => {
+  const colors = [CALENDAR_COLORS.GREEN, CALENDAR_COLORS.CREAM]
+  return colors[Math.floor(Math.random() * colors.length)]
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -408,7 +422,50 @@ const authenticateUser = async (req, res, next) => {
 
 // Supabase doesn't need initialization - it's ready to use!
 
-// Anthropic API proxy endpoint
+// OpenAI API proxy endpoint
+app.post('/api/openai', authenticateUser, async (req, res) => {
+  try {
+    const { model, messages, temperature, max_tokens, response_format } = req.body;
+
+    const requestBody = {
+      model: model || 'gpt-4o-mini',
+      messages: messages,
+      temperature: temperature || 0.3,
+      max_tokens: max_tokens || 1000
+    };
+
+    // Add response_format if specified
+    if (response_format) {
+      requestBody.response_format = response_format;
+    }
+
+    console.log('🤖 Making OpenAI API request...');
+    
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('OpenAI API error:', errorText);
+      throw new Error(`OpenAI API request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error('Error processing OpenAI request:', error);
+    res.status(500).json({ error: error.message || 'Failed to process OpenAI request' });
+  }
+});
+
+// OpenAI-based calendar assistant endpoint
 app.post('/api/claude', authenticateUser, async (req, res) => {
   try {
     const { message, chatHistory, userTimeZone } = req.body;
@@ -448,73 +505,76 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
       chatHistory
     };
     
-    // Use Claude API for intelligent calendar assistance
+    // Use OpenAI API for intelligent calendar assistance
     const requestBody = {
-      model: 'claude-3-5-haiku-20240307',
+      model: 'gpt-4o-mini',
       max_tokens: 1000,
       stream: true,
       messages: [{
+        role: 'system',
+        content: 'You are Tilly, a helpful calendar assistant. Respond concisely and always include the requested JSON format at the end of your response when handling scheduling requests.'
+      }, {
         role: 'user',
         content: createCalendarPrompt(message, context)
-      }]
+      }],
+      temperature: 0.3
     };
 
-    console.log('🔍 DEBUG: Events being sent to Claude:');
+    console.log('🔍 DEBUG: Events being sent to OpenAI:');
     console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('📅 Tomorrow events:', tomorrowEvents.length, tomorrowEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('📅 Upcoming events (day after tomorrow+):', upcomingEvents.length, upcomingEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('🔍 DEBUG: Total events in 7-day range:', todayEvents.length);
-    console.log('🔍 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
-    console.log('🔍 DEBUG: API Key length:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.length : 0);
+    console.log('🔍 DEBUG: API Key present:', !!process.env.OPENAI_API_KEY);
+    console.log('🔍 DEBUG: API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
 
     // Retry logic for handling API overload
-    const makeClaudeRequest = async (retryCount = 0, maxRetries = 3) => {
+    const makeOpenAIRequest = async (retryCount = 0, maxRetries = 3) => {
       const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
       
       if (retryCount > 0) {
-        console.log(`🔄 Retrying Claude API request (attempt ${retryCount + 1}/${maxRetries + 1}) after ${delay}ms delay...`);
+        console.log(`🔄 Retrying OpenAI API request (attempt ${retryCount + 1}/${maxRetries + 1}) after ${delay}ms delay...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01'
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
         body: JSON.stringify(requestBody),
         timeout: 30000 // 30 second timeout
       });
 
-      console.log('🔍 DEBUG: Claude API response status:', response.status);
-      console.log('🔍 DEBUG: Claude API response headers:', Object.fromEntries(response.headers.entries()));
+      console.log('🔍 DEBUG: OpenAI API response status:', response.status);
+      console.log('🔍 DEBUG: OpenAI API response headers:', Object.fromEntries(response.headers.entries()));
 
-      // Handle overload errors with retry
-      if (response.status === 529 && retryCount < maxRetries) {
+      // Handle rate limit errors with retry
+      if (response.status === 429 && retryCount < maxRetries) {
         const errorText = await response.text();
-        console.log(`⚠️ Claude API overloaded (529), retrying... Response: ${errorText}`);
-        return makeClaudeRequest(retryCount + 1, maxRetries);
+        console.log(`⚠️ OpenAI API rate limited (429), retrying... Response: ${errorText}`);
+        return makeOpenAIRequest(retryCount + 1, maxRetries);
       }
 
       return response;
     };
 
-    const response = await makeClaudeRequest();
+    const response = await makeOpenAIRequest();
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('🚨 Claude API Error Response:', errorText);
+      console.error('🚨 OpenAI API Error Response:', errorText);
       
-      // If Claude API is overloaded after all retries, provide a graceful fallback
-      if (response.status === 529) {
-        console.log('📋 Providing fallback response due to Claude API overload');
+      // If OpenAI API is rate limited after all retries, provide a graceful fallback
+      if (response.status === 429) {
+        console.log('📋 Providing fallback response due to OpenAI API rate limit');
         const fallbackResponse = createFallbackResponse(message, context);
         res.json({ response: fallbackResponse, context: context });
         return;
       }
       
-      throw new Error(`Claude API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(`OpenAI API request failed: ${response.status} ${response.statusText}`);
     }
 
     // Set up streaming response headers
@@ -551,8 +611,9 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
             try {
               const parsed = JSON.parse(data);
               
-              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-                const text = parsed.delta.text;
+              // OpenAI streaming format
+              if (parsed.choices && parsed.choices[0]?.delta?.content) {
+                const text = parsed.choices[0].delta.content;
                 fullResponse += text;
                 
                 // Send streaming chunk to frontend
@@ -578,7 +639,7 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
             // Validate the action data before sending to frontend
             const validationResult = validateActionData(actionData, context);
             if (!validationResult.valid) {
-              console.error('🚨 Claude response validation failed:', validationResult.error);
+              console.error('🚨 OpenAI response validation failed:', validationResult.error);
               res.write(`data: ${JSON.stringify({ 
                 type: 'error', 
                 error: 'Invalid calendar response detected',
@@ -609,7 +670,7 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
             }
           }
         } catch (e) {
-          console.warn('Failed to parse JSON from Claude response:', e.message);
+          console.warn('Failed to parse JSON from OpenAI response:', e.message);
         }
       }
       
@@ -698,7 +759,7 @@ app.post('/api/events', authenticateUser, async (req, res) => {
       title,
       start: startDate,
       end: endDate,
-      color: color || '#4A7C2A'
+      color: color || getRandomEventColor()
     }, req.userId, req.supabase);
     
     console.log('Created new event:', newEvent);
@@ -773,7 +834,7 @@ app.delete('/api/events/:id', authenticateUser, async (req, res) => {
 });
 
 // ============================================================================
-// AI TOOL ENDPOINTS - Clean tool-based API for Claude assistant
+// AI TOOL ENDPOINTS - Clean tool-based API for OpenAI assistant
 // ============================================================================
 
 // Tool: get_calendar_events - Get events for conflict checking and context
@@ -986,7 +1047,7 @@ app.post('/api/tools/check_time_conflicts', authenticateUser, async (req, res) =
   }
 });
 
-// NEW: Tool-based Claude AI endpoint
+// Tool-based OpenAI endpoint
 app.post('/api/ai/chat', authenticateUser, async (req, res) => {
   try {
     const { message, chatHistory = [], userTimeZone, suggestionMode = false } = req.body;
@@ -1002,29 +1063,34 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Define tools for Claude
+    // Define tools for OpenAI
     const tools = [
       {
-        name: "get_calendar_events",
-        description: "Get calendar events for a specific date range or all events if no range provided. Use this to check existing events before scheduling.",
-        input_schema: {
-          type: "object",
-          properties: {
-            start_date: {
-              type: "string",
-              description: "Start date in ISO format (YYYY-MM-DD) - optional"
-            },
-            end_date: {
-              type: "string", 
-              description: "End date in ISO format (YYYY-MM-DD) - optional"
+        type: "function",
+        function: {
+          name: "get_calendar_events",
+          description: "Get calendar events for a specific date range or all events if no range provided. Use this to check existing events before scheduling.",
+          parameters: {
+            type: "object",
+            properties: {
+              start_date: {
+                type: "string",
+                description: "Start date in ISO format (YYYY-MM-DD) - optional"
+              },
+              end_date: {
+                type: "string", 
+                description: "End date in ISO format (YYYY-MM-DD) - optional"
+              }
             }
           }
         }
       },
       {
-        name: "create_event",
-        description: "Create a new calendar event. Always check for conflicts first using get_calendar_events.",
-        input_schema: {
+        type: "function",
+        function: {
+          name: "create_event",
+          description: "Create a new calendar event. Always check for conflicts first using get_calendar_events.",
+          parameters: {
           type: "object",
           properties: {
             title: {
@@ -1044,13 +1110,16 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
               description: "Optional event description"
             }
           },
-          required: ["title", "start_time", "end_time"]
+            required: ["title", "start_time", "end_time"]
+          }
         }
       },
       {
-        name: "move_event",
-        description: "Move/reschedule an existing event to a new time and optionally change its title. Use check_time_conflicts first to ensure no conflicts.",
-        input_schema: {
+        type: "function",
+        function: {
+          name: "move_event",
+          description: "Move/reschedule an existing event to a new time and optionally change its title. Use check_time_conflicts first to ensure no conflicts.",
+          parameters: {
           type: "object",
           properties: {
             event_id: {
@@ -1070,13 +1139,16 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
               description: "Optional: New title for the event. Use this when renaming and moving in one operation."
             }
           },
-          required: ["event_id", "new_start_time", "new_end_time"]
+            required: ["event_id", "new_start_time", "new_end_time"]
+          }
         }
       },
       {
-        name: "check_time_conflicts",
-        description: "Check if a proposed time slot conflicts with existing events.",
-        input_schema: {
+        type: "function",
+        function: {
+          name: "check_time_conflicts",
+          description: "Check if a proposed time slot conflicts with existing events.",
+          parameters: {
           type: "object",
           properties: {
             start_time: {
@@ -1092,13 +1164,16 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
               description: "Optional: Event ID to exclude from conflict check (for rescheduling)"
             }
           },
-          required: ["start_time", "end_time"]
+            required: ["start_time", "end_time"]
+          }
         }
       },
       {
-        name: "search_events",
-        description: "Search for events by title (case-insensitive partial match).",
-        input_schema: {
+        type: "function",
+        function: {
+          name: "search_events",
+          description: "Search for events by title (case-insensitive partial match).",
+          parameters: {
           type: "object",
           properties: {
             search_term: {
@@ -1114,7 +1189,8 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
               description: "Optional: Filter events starting before this date (YYYY-MM-DD)"
             }
           },
-          required: ["search_term"]
+            required: ["search_term"]
+          }
         }
       }
     ];
@@ -1148,56 +1224,76 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
       return `${day}: ${events.map(e => `"${e.title}" (${utcToLocal(e.start, '12h', req.userTimeZone)} - ${utcToLocal(e.end, '12h', req.userTimeZone)})`).join(', ')}`;
     };
 
-    // Create system prompt with detailed timezone information
+    // Create enhanced system prompt with detailed date/time awareness
     const tzInfo = getUserTimezoneInfo(req.userTimeZone);
-    const systemPrompt = `You are Tilly, a helpful calendar assistant. 
+    
+    // Get more detailed date context
+    const now = new Date();
+    const currentDate = now.toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric',
+      timeZone: req.userTimeZone 
+    });
+    
+    const systemPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
 
-CURRENT CONTEXT:
-- Current UTC time: ${new Date().toISOString()}
-- Current local time: ${tzInfo.localTimeStr}
-- Current date: ${new Date().toLocaleDateString()}
-- Current day: ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}
-- User timezone: ${tzInfo.timeZone} (${tzInfo.offsetFormatted}, ${tzInfo.tzAbbr})
-- Daylight Saving Time active: ${tzInfo.isDST ? 'Yes' : 'No'}
+📅 CURRENT DATE & TIME CONTEXT:
+- TODAY is ${currentDate}
+- Current local time: ${tzInfo.localTimeStr} (${tzInfo.tzAbbr})
+- Current date string: ${todayStr} (YYYY-MM-DD format)
+- Tomorrow date string: ${tomorrowStr} (YYYY-MM-DD format)
+- User timezone: ${tzInfo.timeZone} (${tzInfo.offsetFormatted})
 
-UPCOMING EVENTS:
-- ${formatEventsForPrompt(todayEvents, 'Today')}
-- ${formatEventsForPrompt(tomorrowEvents, 'Tomorrow')}
+📋 TODAY'S SCHEDULE (${todayStr}):
+${formatEventsForPrompt(todayEvents, 'TODAY')}
 
-IMPORTANT TIME HANDLING:
-- When DISPLAYING times to the user, ALWAYS convert from UTC to ${tzInfo.timeZone} (${tzInfo.offsetFormatted})
-- When CALLING TOOLS, always use LOCAL TIME format (YYYY-MM-DDTHH:MM:SS) without Z suffix
-- When the user mentions times like "3pm", interpret that as ${tzInfo.timeZone} time and pass as-is to tools (e.g., "2025-06-20T15:00:00")
-- NEVER include Z suffix in tool calls - the system handles UTC conversion automatically
-- Display times naturally without explicitly mentioning the timezone unless there's ambiguity or the user asks
+📋 TOMORROW'S SCHEDULE (${tomorrowStr}):
+${formatEventsForPrompt(tomorrowEvents, 'TOMORROW')}
 
-TIME CONVERSION EXAMPLES:
-- Local 9:00 AM ${tzInfo.tzAbbr} = ${localToUTC("9:00 AM")} in UTC
-- Local 3:00 PM ${tzInfo.tzAbbr} = ${localToUTC("3:00 PM")} in UTC
-- Local 8:30 PM ${tzInfo.tzAbbr} = ${localToUTC("8:30 PM")} in UTC
-- UTC ${new Date().toISOString()} = ${utcToLocal(new Date().toISOString(), '12h', req.userTimeZone)} ${tzInfo.tzAbbr}
+🎯 CRITICAL DATE INTERPRETATION RULES:
+1. When user says "today" → Always use date ${todayStr}
+2. When user says "tomorrow" → Always use date ${tomorrowStr}
+3. When user says "3pm today" → Create event for ${todayStr}T15:00:00
+4. When user says "3pm" without specifying day → Assume TODAY (${todayStr}T15:00:00)
+5. When user says day names (Monday, Tuesday, etc.) → Calculate the NEXT occurrence of that day
+6. When user says "this [day]" → Find the occurrence within this week
+7. When user says "next [day]" → Find the occurrence in the following week
 
-GUIDELINES:
-1. You automatically have context of today and tomorrow's events (shown above) - use this for quick reference
-2. For events on other days, use the get_calendar_events tool to retrieve them
-3. Always check existing events before scheduling to avoid conflicts
-4. When creating events, use LOCAL TIME format (YYYY-MM-DDTHH:MM:SS) WITHOUT Z suffix
-5. Suggest alternative times if conflicts exist
-6. Be conversational and helpful
-7. If moving events to resolve conflicts, explain the changes clearly
-8. Use tools in the right order: check conflicts → create/move events
-9. Events you create will automatically appear in cream color to distinguish them from user-created events
-10. When renaming and moving an event, use the move_event tool with new_title parameter rather than creating new events and deleting old ones
-11. You can search for events by title using the search_events tool with a search term
+⚠️ COMMON MISTAKES TO AVOID:
+- Do NOT confuse today (${todayStr}) with other dates
+- Do NOT schedule events for wrong dates
+- Do NOT assume times without considering the current date
+- Always double-check: if user says "today at 3pm" → use ${todayStr}T15:00:00
 
-CONFLICT RESOLUTION STRATEGY:
-- Check for conflicts first with check_time_conflicts
-- If conflicts exist, either suggest alternative times or offer to move existing events
-- Prefer suggesting buffer time (15-30 min) between events
-- Ask user permission before moving existing events`;
+🔧 TOOL USAGE FOR DATES:
+- For TODAY's events: Use the events already provided above
+- For TOMORROW's events: Use the events already provided above  
+- For other dates: Use get_calendar_events tool with start_date and end_date
+- When creating events: Always use YYYY-MM-DDTHH:MM:SS format WITHOUT Z suffix
+- Time format examples:
+  * "today at 3pm" → "${todayStr}T15:00:00"
+  * "tomorrow at 9am" → "${tomorrowStr}T09:00:00"
+  * "monday at 2pm" → Calculate next Monday + "T14:00:00"
 
-    // Build message history for Claude
-    const messages = [];
+🎯 WORKFLOW:
+1. Parse user's date/time intent carefully
+2. Check if it's for TODAY or TOMORROW (use provided events above)
+3. For other dates, use get_calendar_events tool first
+4. Check for conflicts with check_time_conflicts
+5. Create or move events as needed
+6. Confirm the action with the specific date and time
+
+REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify with the user!`;
+
+    // Build message history for OpenAI
+    const messages = [
+      {
+        role: 'system',
+        content: systemPrompt
+      }
+    ];
     
     // Add chat history
     chatHistory.forEach(msg => {
@@ -1213,53 +1309,49 @@ CONFLICT RESOLUTION STRATEGY:
       content: message
     });
 
-    const claudeRequest = {
-      model: 'claude-3-5-haiku-20241022',
+    const openaiRequest = {
+      model: 'gpt-4o-mini',
       max_tokens: 1000,
-      system: systemPrompt,
       messages: messages,
-      tools: tools
+      tools: tools,
+      tool_choice: 'auto',
+      temperature: 0.3
     };
 
-    console.log('🤖 Making Claude API request with tools...');
+    console.log('🤖 Making OpenAI API request with tools...');
     
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify(claudeRequest)
+      body: JSON.stringify(openaiRequest)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Claude API error:', errorText);
-      throw new Error(`Claude API request failed: ${response.status}`);
+      console.error('OpenAI API error:', errorText);
+      throw new Error(`OpenAI API request failed: ${response.status}`);
     }
 
-    const claudeData = await response.json();
+    const openaiData = await response.json();
+    const choice = openaiData.choices[0];
     
-    // Check if Claude wants to use tools
-    const hasToolUse = claudeData.content.some(content => content.type === 'tool_use');
+    // Check if OpenAI wants to use tools
+    const hasToolCalls = choice.message.tool_calls && choice.message.tool_calls.length > 0;
     
-    if (hasToolUse) {
+    if (hasToolCalls) {
       if (suggestionMode) {
-        console.log('🔧 Claude wants to use tools, returning suggestions without executing...');
+        console.log('🔧 OpenAI wants to use tools, returning suggestions without executing...');
         
         // Extract tool suggestions without executing
-        const suggestedTools = claudeData.content
-          .filter(content => content.type === 'tool_use')
-          .map(toolUse => ({
-            name: toolUse.name,
-            input: toolUse.input
-          }));
+        const suggestedTools = choice.message.tool_calls.map(toolCall => ({
+          name: toolCall.function.name,
+          input: JSON.parse(toolCall.function.arguments)
+        }));
         
-        const responseText = claudeData.content
-          .filter(content => content.type === 'text')
-          .map(content => content.text)
-          .join('');
+        const responseText = choice.message.content || '';
         
         return res.json({
           response: responseText,
@@ -1268,207 +1360,121 @@ CONFLICT RESOLUTION STRATEGY:
         });
       }
       
-      console.log('🔧 Claude wants to use tools, executing and getting final response...');
+      console.log('🔧 OpenAI wants to use tools, executing and getting final response...');
       
       // Execute all tool calls
       const toolResults = [];
-      for (const content of claudeData.content) {
-        if (content.type === 'tool_use') {
-          console.log(`🔧 Executing tool: ${content.name}`, content.input);
+      for (const toolCall of choice.message.tool_calls) {
+        const toolName = toolCall.function.name;
+        const toolInput = JSON.parse(toolCall.function.arguments);
+        
+        console.log(`🔧 Executing tool: ${toolName}`, toolInput);
+        
+        try {
+          let toolResult;
           
-          try {
-            let toolResult;
-            
-            switch (content.name) {
-              case 'get_calendar_events':
-                toolResult = await executeGetCalendarEvents(content.input, req);
-                break;
-              case 'create_event':
-                toolResult = await executeCreateEvent(content.input, req);
-                break;
-              case 'move_event':
-                toolResult = await executeMoveEvent(content.input, req);
-                break;
-              case 'check_time_conflicts':
-                toolResult = await executeCheckTimeConflicts(content.input, req);
-                break;
-              case 'search_events':
-                toolResult = await executeSearchEvents(content.input, req);
-                break;
-              default:
-                toolResult = { success: false, error: 'Unknown tool' };
+          switch (toolName) {
+            case 'get_calendar_events':
+              toolResult = await executeGetCalendarEvents(toolInput, req);
+              break;
+            case 'create_event':
+              toolResult = await executeCreateEvent(toolInput, req);
+              break;
+            case 'move_event':
+              toolResult = await executeMoveEvent(toolInput, req);
+              break;
+            case 'check_time_conflicts':
+              toolResult = await executeCheckTimeConflicts(toolInput, req);
+              break;
+            case 'search_events':
+              toolResult = await executeSearchEvents(toolInput, req);
+              break;
+            default:
+              toolResult = { success: false, error: 'Unknown tool' };
             }
             
-                      console.log(`✅ Tool ${content.name} completed:`, toolResult.success ? 'SUCCESS' : 'FAILED');
+          console.log(`✅ Tool ${toolName} completed:`, toolResult.success ? 'SUCCESS' : 'FAILED');
           
           // Track tool name for change detection BEFORE stringifying
-          toolResult._tool_name = content.name;
+          toolResult._tool_name = toolName;
           
           toolResults.push({
-            tool_use_id: content.id,
-            type: 'tool_result',
+            tool_call_id: toolCall.id,
+            role: 'tool',
+            name: toolName,
             content: JSON.stringify(toolResult)
           });
             
-  } catch (error) {
-            console.error(`❌ Error executing tool ${content.name}:`, error);
-            toolResults.push({
-              tool_use_id: content.id,
-              type: 'tool_result',
-              content: JSON.stringify({ success: false, error: error.message })
-            });
-          }
+        } catch (error) {
+          console.error(`❌ Error executing tool ${toolName}:`, error);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            role: 'tool',
+            name: toolName,
+            content: JSON.stringify({ success: false, error: error.message })
+          });
         }
       }
       
-      // Continue conversation with tool results, allowing for multiple rounds
+      // Continue conversation with tool results
       const conversationMessages = [
         ...messages,
-        {
-          role: 'assistant',
-          content: claudeData.content
-        },
-        {
-          role: 'user',
-          content: toolResults
-        }
+        choice.message,
+        ...toolResults
       ];
       
-      let allToolResults = [...toolResults];
-      let finalResponse;
-      let maxRounds = 5; // Prevent infinite loops
-      let round = 1;
+      console.log('🔄 Sending tool results back to OpenAI...');
       
-      while (round <= maxRounds) {
-        console.log(`🔄 Round ${round}: Sending tool results back to Claude...`);
-        
-        const followUpRequest = {
-          model: 'claude-3-5-haiku-20241022',
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: conversationMessages,
-          tools: tools
-        };
-        
-        const followUpResponse = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': process.env.ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify(followUpRequest)
-        });
-        
-        if (!followUpResponse.ok) {
-          const errorText = await followUpResponse.text();
-          console.error(`Claude API error ${followUpResponse.status}:`, errorText);
-          throw new Error(`Claude follow-up request failed: ${followUpResponse.status}`);
-        }
-        
-        finalResponse = await followUpResponse.json();
-        
-        // Check if Claude wants to use more tools
-        const hasMoreToolUse = finalResponse.content.some(content => content.type === 'tool_use');
-        
-        if (!hasMoreToolUse) {
-          console.log(`🎉 Round ${round}: Claude finished with final response`);
-          break;
-        }
-        
-        console.log(`🔧 Round ${round}: Claude wants to use more tools...`);
-        
-        // Execute the additional tools
-        const moreToolResults = [];
-        for (const content of finalResponse.content) {
-          if (content.type === 'tool_use') {
-            console.log(`🔧 Round ${round}: Executing tool: ${content.name}`, content.input);
-            
-            try {
-              let toolResult;
-              
-              switch (content.name) {
-                case 'get_calendar_events':
-                  toolResult = await executeGetCalendarEvents(content.input, req);
-                  break;
-                case 'create_event':
-                  toolResult = await executeCreateEvent(content.input, req);
-                  break;
-                case 'move_event':
-                  toolResult = await executeMoveEvent(content.input, req);
-                  break;
-                case 'check_time_conflicts':
-                  toolResult = await executeCheckTimeConflicts(content.input, req);
-                  break;
-                case 'search_events':
-                  toolResult = await executeSearchEvents(content.input, req);
-                  break;
-                default:
-                  toolResult = { success: false, error: 'Unknown tool' };
-              }
-              
-              console.log(`✅ Round ${round}: Tool ${content.name} completed:`, toolResult.success ? 'SUCCESS' : 'FAILED');
-              
-              // Track tool name for change detection BEFORE stringifying
-              toolResult._tool_name = content.name;
-              
-              moreToolResults.push({
-                tool_use_id: content.id,
-                type: 'tool_result',
-                content: JSON.stringify(toolResult)
-              });
-              
-  } catch (error) {
-              console.error(`❌ Round ${round}: Error executing tool ${content.name}:`, error);
-              moreToolResults.push({
-                tool_use_id: content.id,
-                type: 'tool_result',
-                content: JSON.stringify({ success: false, error: error.message })
-              });
-            }
-          }
-        }
-        
-        // Add this round to the conversation
-        conversationMessages.push({
-          role: 'assistant',
-          content: finalResponse.content
-        });
-        conversationMessages.push({
-          role: 'user',
-          content: moreToolResults
-        });
-        
-        allToolResults.push(...moreToolResults);
-        round++;
+      const followUpRequest = {
+        model: 'gpt-4o-mini',
+        max_tokens: 1000,
+        messages: conversationMessages,
+        temperature: 0.3
+      };
+      
+      const followUpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+        },
+        body: JSON.stringify(followUpRequest)
+      });
+      
+      if (!followUpResponse.ok) {
+        const errorText = await followUpResponse.text();
+        console.error(`OpenAI API error ${followUpResponse.status}:`, errorText);
+        throw new Error(`OpenAI follow-up request failed: ${followUpResponse.status}`);
       }
       
-      const finalText = finalResponse.content.map(c => c.text).join('');
+      const finalResponse = await followUpResponse.json();
+      const finalChoice = finalResponse.choices[0];
       
-              // Check if any events were created/moved across all rounds
-        console.log('🔍 Checking for event changes in', allToolResults.length, 'tool results');
-        const hasEventChanges = allToolResults.some(result => {
-          const content = JSON.parse(result.content);
-          console.log('🔍 Tool result:', content._tool_name, 'success:', content.success);
-          return content.success && ['create_event', 'move_event'].includes(content._tool_name);
-        });
-        
-        console.log('🔍 hasEventChanges:', hasEventChanges);
-        if (hasEventChanges) {
-          console.log('📅 Event changes detected - frontend will refresh calendar');
-        }
+      const finalText = finalChoice.message.content || '';
+      
+      // Check if any events were created/moved
+      console.log('🔍 Checking for event changes in', toolResults.length, 'tool results');
+      const hasEventChanges = toolResults.some(result => {
+        const content = JSON.parse(result.content);
+        console.log('🔍 Tool result:', content._tool_name, 'success:', content.success);
+        return content.success && ['create_event', 'move_event'].includes(content._tool_name);
+      });
+      
+      console.log('🔍 hasEventChanges:', hasEventChanges);
+      if (hasEventChanges) {
+        console.log('📅 Event changes detected - frontend will refresh calendar');
+      }
       
       res.json({
         response: finalText,
-        toolResults: allToolResults.map(r => ({ ...r, content: JSON.parse(r.content) })),
+        toolResults: toolResults.map(r => ({ ...r, content: JSON.parse(r.content) })),
         hasEventChanges,
-        totalRounds: round - 1,
         success: true
       });
       
     } else {
-      // No tools needed, just return Claude's text response
-      const responseText = claudeData.content.map(c => c.text).join('');
+      // No tools needed, just return OpenAI's text response
+      const responseText = choice.message.content || '';
       res.json({
         response: responseText,
         toolResults: [],
@@ -1544,8 +1550,27 @@ THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.star
       ? `\nRecent conversation:\n${chatHistory.slice(-3).map(msg => `${msg.sender}: ${msg.text}`).join('\n')}\n`
       : '';
     
-    // Optimized prompt for speed and clarity - place action at end
-    const smartPrompt = `Calendar Assistant. Time: ${new Date().toLocaleString()} (${userTimeZone})
+    // Get enhanced date/time context
+    const tzInfo = getUserTimezoneInfo(userTimeZone);
+    const currentDate = new Date();
+    const tomorrowStr = new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0];
+    
+    // Enhanced prompt with precise date awareness
+    const smartPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
+
+📅 CURRENT DATE & TIME CONTEXT:
+- TODAY is ${todayStr}
+- Current local time: ${tzInfo.localTimeStr} (${tzInfo.tzAbbr})
+- Current date string: ${todayStr} (YYYY-MM-DD format)
+- Tomorrow date string: ${tomorrowStr} (YYYY-MM-DD format)
+
+🎯 CRITICAL DATE INTERPRETATION RULES:
+1. When user says "today" → Always use date ${todayStr}
+2. When user says "tomorrow" → Always use date ${tomorrowStr}
+3. When user says "3pm today" → Create event for ${todayStr}T15:00:00
+4. When user says "3pm" without specifying day → Assume TODAY (${todayStr}T15:00:00)
+5. When user says a day name like "Monday" → Find the next upcoming Monday from today
+6. Always double-check: is this for today (${todayStr}) or another day?
 
 ${eventsContext}${conversationHistory}
 
@@ -1555,28 +1580,41 @@ Respond naturally first, then if action needed, add on new line:
 CREATE_EVENT: {title: "Name", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}
 MOVE_EVENT: {eventTitle: "Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}`;
 
-    console.log('🤖 Making streamlined Haiku request...');
+    console.log('🤖 Making streamlined OpenAI request...');
+    console.log('🔍 DEBUG: OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
+    console.log('🔍 DEBUG: OPENAI_API_KEY length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
+    console.log('🔍 DEBUG: OPENAI_API_KEY starts with sk-:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.startsWith('sk-') : false);
     
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'gpt-4o-mini',
         max_tokens: 200, // Reduced for faster responses
-        messages: [{ role: 'user', content: smartPrompt }]
+        messages: [
+          { role: 'system', content: 'You are Tilly, a helpful calendar assistant. Be concise.' },
+          { role: 'user', content: smartPrompt }
+        ],
+        temperature: 0.3
       })
     });
 
     if (!response.ok) {
-      throw new Error(`Haiku API request failed: ${response.status}`);
+      const errorBody = await response.text();
+      console.error('🔍 OpenAI API Error Details:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: errorBody
+      });
+      throw new Error(`OpenAI API request failed: ${response.status} - ${errorBody}`);
     }
 
     const aiData = await response.json();
-    const aiResponse = aiData.content[0].text;
+    const aiResponse = aiData.choices[0].message.content;
     
     console.log('🔍 AI Response:', aiResponse);
     
@@ -1694,85 +1732,95 @@ The user has asked a complex question that requires searching or analyzing their
 User: ${message}
 Assistant:`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'gpt-4o-mini',
         max_tokens: 1000,
-        messages: [{ role: 'user', content: complexPrompt }],
-        tools: complexTools
+        messages: [
+          { role: 'system', content: 'You are Tilly, a helpful calendar assistant.' },
+          { role: 'user', content: complexPrompt }
+        ],
+        tools: complexTools,
+        tool_choice: 'auto',
+        temperature: 0.3
       })
     });
 
     if (!response.ok) {
-      throw new Error(`Haiku API request failed: ${response.status}`);
+      throw new Error(`OpenAI API request failed: ${response.status}`);
     }
 
-    const claudeData = await response.json();
+    const openaiData = await response.json();
+    const choice = openaiData.choices[0];
     
-    // Check if Claude wants to use tools
-    const hasToolUse = claudeData.content.some(content => content.type === 'tool_use');
+    // Check if OpenAI wants to use tools
+    const hasToolCalls = choice.message.tool_calls && choice.message.tool_calls.length > 0;
     
-    if (hasToolUse) {
-      console.log('🔧 Claude wants to use tools for complex query...');
+    if (hasToolCalls) {
+      console.log('🔧 OpenAI wants to use tools for complex query...');
       
       // Execute tools and get final response
       const toolResults = [];
-      for (const content of claudeData.content) {
-        if (content.type === 'tool_use') {
-          let result;
-          try {
-            switch (content.name) {
-              case 'search_events':
-                result = await executeSearchEvents(content.input, req);
-                break;
-              case 'analyze_schedule':
-                result = await executeAnalyzeSchedule(content.input, req);
-                break;
-              case 'get_calendar_events':
-                result = await executeGetCalendarEvents(content.input, req);
-                break;
-              default:
-                result = { success: false, error: `Unknown tool: ${content.name}` };
-            }
-          } catch (error) {
-            result = { success: false, error: error.message };
+      for (const toolCall of choice.message.tool_calls) {
+        const toolName = toolCall.function.name;
+        const toolInput = JSON.parse(toolCall.function.arguments);
+        
+        let result;
+        try {
+          switch (toolName) {
+            case 'search_events':
+              result = await executeSearchEvents(toolInput, req);
+              break;
+            case 'analyze_schedule':
+              result = await executeAnalyzeSchedule(toolInput, req);
+              break;
+            case 'get_calendar_events':
+              result = await executeGetCalendarEvents(toolInput, req);
+              break;
+            default:
+              result = { success: false, error: `Unknown tool: ${toolName}` };
           }
-          
-          toolResults.push({
-            tool_use_id: content.id,
-            type: 'tool_result',
-            content: JSON.stringify(result)
-          });
+        } catch (error) {
+          result = { success: false, error: error.message };
         }
+        
+        toolResults.push({
+          tool_call_id: toolCall.id,
+          role: 'tool',
+          name: toolName,
+          content: JSON.stringify(result)
+        });
       }
       
-      // Get final response from Claude with tool results
-      const finalResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      // Get final response from OpenAI with tool results
+      const conversationMessages = [
+        { role: 'system', content: 'You are Tilly, a helpful calendar assistant.' },
+        { role: 'user', content: complexPrompt },
+        choice.message,
+        ...toolResults
+      ];
+      
+      const finalResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01'
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'gpt-4o-mini',
           max_tokens: 1000,
-          messages: [
-            { role: 'user', content: complexPrompt },
-            { role: 'assistant', content: claudeData.content },
-            { role: 'user', content: toolResults }
-          ]
+          messages: conversationMessages,
+          temperature: 0.3
         })
       });
       
       const finalData = await finalResponse.json();
-      const finalText = finalData.content.map(c => c.text).join('');
+      const finalText = finalData.choices[0].message.content;
       
       return res.json({
         response: finalText,
@@ -1782,7 +1830,7 @@ Assistant:`;
       });
     } else {
       // No tools needed, return direct response
-      const responseText = claudeData.content.map(c => c.text).join('');
+      const responseText = choice.message.content;
       return res.json({
         response: responseText,
         suggestions: [],
@@ -2129,7 +2177,7 @@ async function executeCreateEvent(input, req) {
       };
     }
     
-    // Use the DST-aware conversion function for Claude's local time inputs
+    // Use the DST-aware conversion function for AI's local time inputs
     let startDate, endDate;
     try {
       startDate = convertLocalTimeToUTC(start_time, req.userTimeZone);
@@ -2194,7 +2242,7 @@ async function executeMoveEvent(input, req) {
       };
     }
     
-    // Use the DST-aware conversion function for Claude's local time inputs
+    // Use the DST-aware conversion function for AI's local time inputs
     let newStartDate, newEndDate;
     try {
       newStartDate = convertLocalTimeToUTC(new_start_time, req.userTimeZone);
@@ -2265,7 +2313,7 @@ async function executeCheckTimeConflicts(input, req) {
       };
     }
     
-    // Use the DST-aware conversion function for Claude's local time inputs
+    // Use the DST-aware conversion function for AI's local time inputs
     let startDate, endDate;
     try {
       startDate = convertLocalTimeToUTC(start_time, req.userTimeZone);
@@ -2402,7 +2450,7 @@ async function executeSearchEvents(input, req) {
     
     console.log(`🔍 Found ${events.length} events matching "${search_term}"`);
     
-    // Limit events sent to Claude to prevent API issues
+    // Limit events sent to AI to prevent API issues
     const maxEventsForAI = 50;
     const eventsForAI = events.slice(0, maxEventsForAI);
     const wasLimited = events.length > maxEventsForAI;
@@ -2550,7 +2598,7 @@ app.post('/api/events/import', authenticateUser, upload.single('icalFile'), asyn
             title: expandedEvent.title || expandedEvent.summary,
             start: expandedEvent.start,
             end: expandedEvent.end,
-            color: '#4A7C2A' // Use dark green color for imported events
+            color: getRandomEventColor() // Use random green or cream color for imported events
           };
           
           console.log(`Successfully processed event:`, eventToImport);
@@ -2665,7 +2713,7 @@ app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, 
           title: expandedEvent.title || expandedEvent.summary,
           start: expandedEvent.start,
           end: expandedEvent.end,
-          color: '#4A7C2A', // Default lighter green for URL imports
+          color: getRandomEventColor(), // Random green or cream for URL imports
           uid: expandedEvent.uid || event.uid
         });
       }
@@ -2680,7 +2728,7 @@ app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, 
         const subscription = await addCalendarSubscription({ 
           name: name.trim(), 
           url, 
-          color: '#4A7C2A' 
+          color: getRandomEventColor() 
         }, req.userId, req.supabase);
         subscriptionId = subscription.id;
         
@@ -2852,7 +2900,7 @@ app.post('/api/calendar-subscriptions/:id/sync', authenticateUser, async (req, r
     }
 
     const result = await importEventsFromSubscription(subscriptionId, eventsData, req.userId, req.supabase);
-    await updateCalendarSync(subscriptionId);
+    await updateCalendarSync(subscriptionId, new Date(), req.userId, req.supabase);
     
     console.log(`✅ Sync complete: ${subscription.name} (${result.successful}/${result.total} events)`);
     res.json({
@@ -2934,7 +2982,7 @@ app.post('/api/calendar-subscriptions/sync-all', authenticateUser, async (req, r
         }
 
         const result = await importEventsFromSubscription(subscription.id, eventsData, req.userId, req.supabase);
-        await updateCalendarSync(subscription.id);
+        await updateCalendarSync(subscription.id, new Date(), req.userId, req.supabase);
         
         results.push({
           subscription: subscription.name,
@@ -2977,21 +3025,19 @@ let syncInterval;
 const startAutoSync = () => {
   if (syncInterval) clearInterval(syncInterval);
   
-  // TEMPORARILY DISABLED: Auto-sync was causing cross-user calendar contamination
-  // Need to fix user context issues before re-enabling
-  console.log('⚠️ Auto-sync temporarily disabled to prevent calendar leakage');
-  return;
-  
   syncInterval = setInterval(async () => {
     try {
       console.log('🔄 Auto-sync starting...');
       
-      // Fetch all subscriptions from all users
-      const allSubscriptions = await getCalendarSubscriptions();
+      // Fetch all subscriptions from all users that have sync enabled
+      const allSubscriptions = await getAllCalendarSubscriptionsForAutoSync();
       
       // Group subscriptions by user to process them securely
       const subscriptionsByUser = allSubscriptions.reduce((acc, sub) => {
-        if (!sub.user_id) return acc;
+        if (!sub.user_id) {
+          console.warn(`⚠️ Skipping subscription ${sub.id} with no user_id`);
+          return acc;
+        }
         if (!acc[sub.user_id]) acc[sub.user_id] = [];
         acc[sub.user_id].push(sub);
         return acc;
@@ -3005,8 +3051,6 @@ const startAutoSync = () => {
         console.log(`Processing ${userSubscriptions.length} subscriptions for user ${userId}...`);
 
         for (const subscription of userSubscriptions) {
-          if (!subscription.sync_enabled) continue;
-          
           try {
             console.log(`🔄 Auto-syncing: ${subscription.name} for user ${userId}`);
             
@@ -3058,9 +3102,10 @@ const startAutoSync = () => {
               }
             }
             
-            // CORRECTLY pass the userId for this user's subscription batch
+            // Import events for this specific user
             const result = await importEventsFromSubscription(subscription.id, eventsData, userId, null);
-            await updateCalendarSync(subscription.id);
+            // Update sync timestamp for this specific user's subscription
+            await updateCalendarSync(subscription.id, new Date(), userId);
             
             console.log(`✅ Sync complete for ${subscription.name}: ${result.successful}/${result.total} events`);
             
@@ -3237,7 +3282,7 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     
     const stats = await getCalendarStats('this_week', req.userId, req.supabase);
     
-    // Create calendar context for Claude
+    // Create calendar context for AI
     const now = currentTime;
     const actualTimezone = userTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     const calendarContext = {
@@ -3272,79 +3317,82 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
       });
     }
     
-    // Use Claude API for intelligent calendar assistance
+    // Use OpenAI API for intelligent calendar assistance
     const requestBody = {
-      model: 'claude-3-5-haiku-20240307',
+      model: 'gpt-4o-mini',
       max_tokens: 1000,
       messages: [{
+        role: 'system',
+        content: 'You are Tilly, a helpful calendar assistant. Respond concisely and always include the requested JSON format at the end of your response when handling scheduling requests.'
+      }, {
         role: 'user',
         content: createCalendarPrompt(query, calendarContext)
-      }]
+      }],
+      temperature: 0.3
     };
 
-    console.log('🔍 DEBUG: Events being sent to Claude:');
+    console.log('🔍 DEBUG: Events being sent to OpenAI:');
     console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('📅 Tomorrow events:', tomorrowEvents.length, tomorrowEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('📅 Upcoming events (day after tomorrow+):', upcomingEvents.length, upcomingEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
     console.log('🔍 DEBUG: Total events in 7-day range:', recentEvents.length);
-    console.log('🔍 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
-    console.log('🔍 DEBUG: API Key length:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.length : 0);
+    console.log('🔍 DEBUG: API Key present:', !!process.env.OPENAI_API_KEY);
+    console.log('🔍 DEBUG: API Key length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
 
     // Retry logic for handling API overload
-    const makeClaudeRequest = async (retryCount = 0, maxRetries = 3) => {
+    const makeOpenAIRequest = async (retryCount = 0, maxRetries = 3) => {
       const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
       
       if (retryCount > 0) {
-        console.log(`🔄 Retrying Claude API request (attempt ${retryCount + 1}/${maxRetries + 1}) after ${delay}ms delay...`);
+        console.log(`🔄 Retrying OpenAI API request (attempt ${retryCount + 1}/${maxRetries + 1}) after ${delay}ms delay...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01'
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
         body: JSON.stringify(requestBody),
         timeout: 30000 // 30 second timeout
       });
 
-      console.log('🔍 DEBUG: Claude API response status:', response.status);
-      console.log('🔍 DEBUG: Claude API response headers:', Object.fromEntries(response.headers.entries()));
+      console.log('🔍 DEBUG: OpenAI API response status:', response.status);
+      console.log('🔍 DEBUG: OpenAI API response headers:', Object.fromEntries(response.headers.entries()));
 
-      // Handle overload errors with retry
-      if (response.status === 529 && retryCount < maxRetries) {
+      // Handle rate limit errors with retry
+      if (response.status === 429 && retryCount < maxRetries) {
         const errorText = await response.text();
-        console.log(`⚠️ Claude API overloaded (529), retrying... Response: ${errorText}`);
-        return makeClaudeRequest(retryCount + 1, maxRetries);
+        console.log(`⚠️ OpenAI API rate limited (429), retrying... Response: ${errorText}`);
+        return makeOpenAIRequest(retryCount + 1, maxRetries);
       }
 
       return response;
     };
 
-    const response = await makeClaudeRequest();
+    const response = await makeOpenAIRequest();
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('🚨 Claude API Error Response:', errorText);
+      console.error('🚨 OpenAI API Error Response:', errorText);
       
-      // If Claude API is overloaded after all retries, provide a graceful fallback
-      if (response.status === 529) {
-        console.log('📋 Providing fallback response due to Claude API overload');
+      // If OpenAI API is rate limited after all retries, provide a graceful fallback
+      if (response.status === 429) {
+        console.log('📋 Providing fallback response due to OpenAI API rate limit');
         const fallbackResponse = createFallbackResponse(query, calendarContext);
         res.json({ response: fallbackResponse, context: calendarContext });
         return;
       }
       
-      throw new Error(`Claude API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(`OpenAI API request failed: ${response.status} ${response.statusText}`);
     }
 
-    const claudeData = await response.json();
-    const claudeResponse = claudeData.content[0].text;
+    const openaiData = await response.json();
+    const openaiResponse = openaiData.choices[0].message.content;
     
     // Try to extract JSON from the response (could be mixed with text)
-    const jsonMatch = claudeResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
+    const jsonMatch = openaiResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
     
     if (jsonMatch) {
       try {
@@ -3353,8 +3401,8 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
           // Validate the action data before sending to frontend
           const validationResult = validateActionData(actionData, calendarContext);
           if (!validationResult.valid) {
-            console.error('🚨 Claude response validation failed:', validationResult.error);
-            console.error('🚨 Original Claude response:', claudeResponse);
+            console.error('🚨 OpenAI response validation failed:', validationResult.error);
+            console.error('🚨 Original OpenAI response:', openaiResponse);
             // Send error response back to user explaining the issue
             res.status(400).json({ 
               error: 'Invalid calendar response detected',
@@ -3364,7 +3412,7 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
             return;
           } else {
             // Extract the text part (everything before the JSON)
-            const textPart = claudeResponse.replace(jsonMatch[0], '').trim();
+            const textPart = openaiResponse.replace(jsonMatch[0], '').trim();
             
             const responseData = {
               type: actionData.type,
@@ -3392,21 +3440,21 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
         }
       } catch (e) {
         // JSON parsing failed, treat as regular text
-        console.warn('Failed to parse JSON from Claude response:', e.message);
-        console.warn('Original Claude response:', claudeResponse);
+        console.warn('Failed to parse JSON from OpenAI response:', e.message);
+        console.warn('Original OpenAI response:', openaiResponse);
       }
     }
     
     // Cache non-time-sensitive responses
     if (!isTimeQuery) {
       responseCache.set(cacheKey, {
-        response: claudeResponse,
+        response: openaiResponse,
         timestamp: Date.now()
       });
     }
     
     // Regular text response
-    res.json({ response: claudeResponse, context: calendarContext });
+    res.json({ response: openaiResponse, context: calendarContext });
   } catch (error) {
     console.error('Error processing calendar query:', error);
     res.status(500).json({ error: 'Failed to process calendar query' });
@@ -3430,10 +3478,10 @@ function checkEventConflicts(startDate, endDate, existingEvents) {
   return conflicts;
 }
 
-// Validate Claude's action data to prevent time parsing issues
+// Validate AI's action data to prevent time parsing issues
 function validateActionData(actionData, context = null) {
   try {
-    console.log('🔍 Validating Claude action data:', actionData);
+    console.log('🔍 Validating AI action data:', actionData);
     
     if (actionData.type === 'event_suggestion') {
       if (!actionData.eventData) {
@@ -3501,7 +3549,7 @@ function validateActionData(actionData, context = null) {
         console.log(`🔍 Found ${conflicts.length} conflicts:`, conflicts.map(e => e.title));
         if (conflicts.length > 0) {
           const conflictList = conflicts.map(e => `"${e.title}" (${new Date(e.start).toLocaleString()} to ${new Date(e.end).toLocaleString()})`).join(', ');
-          return { valid: false, error: `Event conflict detected! The proposed time ${start} to ${end} conflicts with existing events: ${conflictList}. Claude should have suggested a multiple_actions solution to resolve this conflict.` };
+          return { valid: false, error: `Event conflict detected! The proposed time ${start} to ${end} conflicts with existing events: ${conflictList}. AI should have suggested a multiple_actions solution to resolve this conflict.` };
         }
       } else {
         console.log(`⚠️ No context or recentEvents available for conflict detection`);
@@ -3613,7 +3661,7 @@ function validateActionData(actionData, context = null) {
   }
 }
 
-// Create a well-engineered prompt for Claude
+// Create a well-engineered prompt for AI
 function createCalendarPrompt(query, context) {
   // Group events by day for better context
   const weekEvents = context.recentEvents || [];
@@ -3684,7 +3732,7 @@ With conflict:
 }`;
 }
 
-// Create a fallback response when Claude API is unavailable
+// Create a fallback response when OpenAI API is unavailable
 function createFallbackResponse(query, context) {
   const now = new Date();
   const currentTime = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -3772,8 +3820,8 @@ if (missingEnvVars.length > 0) {
   console.warn('⚠️  Some features may not work correctly without these variables');
 }
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.warn('⚠️  Missing ANTHROPIC_API_KEY - AI features will not work');
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('⚠️  Missing OPENAI_API_KEY - AI features will not work');
 }
 
 app.listen(PORT, '0.0.0.0', () => {

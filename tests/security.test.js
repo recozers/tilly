@@ -158,8 +158,8 @@ describe('Security and Data Isolation', () => {
         end: new Date('2025-06-20T11:00:00Z')
       }, userId);
 
-      // Should have our default dark green color
-      expect(event.color).toBe('#4A7C2A');
+      // Should have one of our random colors (green or cream)
+      expect(['#4A7C2A', '#F4F1E8']).toContain(event.color);
       
       // Event with specified color should keep it
       const coloredEvent = await createEvent({

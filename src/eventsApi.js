@@ -6,6 +6,18 @@ const envBase = import.meta.env?.VITE_API_BASE;
 const resolvedBase = envBase && !envBase.includes('localhost') ? envBase : `${window.location.protocol}//${window.location.host}`;
 const API_BASE_URL = `${resolvedBase}/api`;
 
+// Calendar colors - green and cream
+const CALENDAR_COLORS = {
+  GREEN: '#4A7C2A',
+  CREAM: '#F4F1E8'
+}
+
+// Randomly select between green and cream colors
+const getRandomEventColor = () => {
+  const colors = [CALENDAR_COLORS.GREEN, CALENDAR_COLORS.CREAM]
+  return colors[Math.floor(Math.random() * colors.length)]
+}
+
 // Helper function to get auth headers
 const getAuthHeaders = async () => {
   const { data: { session } } = await supabase.auth.getSession()
@@ -69,7 +81,7 @@ export const createEvent = async (eventData) => {
         title: eventData.title,
         start: eventData.start instanceof Date ? eventData.start.getTime() : eventData.start,
         end: eventData.end instanceof Date ? eventData.end.getTime() : eventData.end,
-        color: eventData.color || '#4A7C2A',
+        color: eventData.color || getRandomEventColor(),
         userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
       }),
     });

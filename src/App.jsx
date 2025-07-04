@@ -430,8 +430,8 @@ const App = () => {
           const newEvent = await eventsApi.createEvent({
             title: action.eventData.title.trim(),
             start: new Date(action.eventData.start),
-            end: new Date(action.eventData.end),
-            color: '#4A7C2A'
+            end: new Date(action.eventData.end)
+            // color will be randomly assigned by the API
           })
           setEvents(prev => [...prev, newEvent])
           setSuccessMessage('Event created successfully!')
@@ -441,6 +441,16 @@ const App = () => {
           })
           setEvents(prev => prev.map(e => e.id === action.eventData.id ? updatedEvent : e))
           setSuccessMessage('Event updated successfully!')
+        } else if (action.type === 'event_rearrangement') {
+          // Handle event rearrangements - update existing events with new times
+          for (const rearrangement of action.rearrangements) {
+            const updatedEvent = await eventsApi.updateEvent(rearrangement.eventId, {
+              start: new Date(rearrangement.newStart),
+              end: new Date(rearrangement.newEnd)
+            })
+            setEvents(prev => prev.map(e => e.id === rearrangement.eventId ? updatedEvent : e))
+          }
+          setSuccessMessage(`Rearranged ${action.rearrangements.length} event${action.rearrangements.length === 1 ? '' : 's'} successfully!`)
         }
       }
       setShowEventConfirmation(false)
@@ -469,8 +479,8 @@ const App = () => {
         const newEvent = await eventsApi.createEvent({
           title: suggestion.title,
           start: startDate,
-          end: endDate,
-          color: '#4A7C2A'
+          end: endDate
+          // color will be randomly assigned by the API
         });
 
         setEvents(prev => [...prev, newEvent]);

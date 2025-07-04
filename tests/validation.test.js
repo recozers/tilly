@@ -1,6 +1,6 @@
 // Validation and Error Handling Tests
 describe('Validation Functions', () => {
-  describe('Claude Action Data Validation', () => {
+  describe('OpenAI Action Data Validation', () => {
     // Simulate the validation function locally for testing
     const validateActionData = (actionData, context = null) => {
       try {

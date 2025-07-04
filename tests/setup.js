@@ -5,7 +5,7 @@ process.env.NODE_ENV = 'test';
 process.env.SUPABASE_URL = 'https://test.supabase.co';
 process.env.SUPABASE_ANON_KEY = 'test_anon_key';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'test_service_role_key';
-process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
+process.env.OPENAI_API_KEY = 'sk-test-key';
 
 // Set test timeout
 jest.setTimeout(10000);

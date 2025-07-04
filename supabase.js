@@ -1,5 +1,17 @@
 const { createClient } = require('@supabase/supabase-js')
 
+// Calendar colors - green and cream
+const CALENDAR_COLORS = {
+  GREEN: '#4A7C2A',
+  CREAM: '#F4F1E8'
+}
+
+// Randomly select between green and cream colors
+const getRandomEventColor = () => {
+  const colors = [CALENDAR_COLORS.GREEN, CALENDAR_COLORS.CREAM]
+  return colors[Math.floor(Math.random() * colors.length)]
+}
+
 // Supabase configuration
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY
@@ -75,7 +87,7 @@ const getEventById = async (id, userId, authenticatedSupabase = null) => {
 const createEvent = async (eventData, userId, authenticatedSupabase = null) => {
   if (!userId) throw new Error('SECURITY: userId is required for createEvent.');
   try {
-    const { title, start, end, color = '#4A7C2A' } = eventData;
+    const { title, start, end, color = getRandomEventColor() } = eventData;
     const client = authenticatedSupabase || supabase;
     
     const insertData = {
@@ -327,6 +339,23 @@ const getCalendarSubscriptions = async (userId, authenticatedSupabase = null) =>
   }
 };
 
+// ADMIN FUNCTION: Get all calendar subscriptions across all users (for auto-sync only)
+const getAllCalendarSubscriptionsForAutoSync = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('calendar_subscriptions')
+      .select('*')
+      .eq('sync_enabled', true) // Only get subscriptions that have sync enabled
+      .order('user_id', { ascending: true });
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error fetching all calendar subscriptions for auto-sync:', error);
+    throw error;
+  }
+};
+
 const updateCalendarSync = async (subscriptionId, lastSync = new Date(), userId, authenticatedSupabase = null) => {
   if (!userId) throw new Error('SECURITY: userId is required for updateCalendarSync.');
   try {
@@ -537,6 +566,7 @@ module.exports = {
   getEventsForPeriod,
   addCalendarSubscription,
   getCalendarSubscriptions,
+  getAllCalendarSubscriptionsForAutoSync,
   updateCalendarSync,
   deleteCalendarSubscription,
   importEvents,

@@ -30,31 +30,30 @@ describe('External Service Integration', () => {
     });
   });
 
-  describe('Anthropic API Connection', () => {
+  describe('OpenAI API Connection', () => {
     test('should have valid API key format', () => {
-      const apiKey = process.env.ANTHROPIC_API_KEY;
+      const apiKey = process.env.OPENAI_API_KEY;
       
       if (apiKey) {
-        expect(apiKey).toMatch(/^sk-ant-/);
+        expect(apiKey).toMatch(/^sk-/);
       } else {
-        console.warn('⚠️  ANTHROPIC_API_KEY not set for testing');
+        console.warn('⚠️  OPENAI_API_KEY not set for testing');
       }
     });
 
     test('should handle API errors gracefully', async () => {
       // Test with invalid API key to ensure error handling works
-      const invalidKey = 'sk-ant-invalid-key';
+      const invalidKey = 'sk-invalid-key';
       
       try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-api-key': invalidKey,
-            'anthropic-version': '2023-06-01'
+            'Authorization': `Bearer ${invalidKey}`
           },
           body: JSON.stringify({
-            model: 'claude-3-sonnet-20241022',
+            model: 'gpt-4o-mini',
             max_tokens: 1,
             messages: [{ role: 'user', content: 'test' }]
           })
@@ -154,7 +153,7 @@ END:VCALENDAR`;
   describe('Security Validation', () => {
     test('should not expose sensitive information in logs', () => {
       const sensitivePatterns = [
-        /sk-ant-[\w-]+/,  // Anthropic API keys
+        /sk-proj-[\w-]+/,  // OpenAI API keys
         /eyJ[\w-]+\.[\w-]+\.[\w-]+/,  // JWT tokens
         /postgres:\/\/[\w:@.-]+/  // Database URLs
       ];

@@ -1,10 +1,8 @@
-// Anthropic API integration for calendar event parsing
-const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+// OpenAI API integration for calendar event parsing
+const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
 // Debug logging (safe - no sensitive data)
-console.log('API Key loaded:', ANTHROPIC_API_KEY ? 'Yes (length: ' + ANTHROPIC_API_KEY.length + ')' : 'No');
-// Removed environment variables logging for security
+console.log('API Key loaded:', OPENAI_API_KEY ? 'Yes (length: ' + OPENAI_API_KEY.length + ')' : 'No');
 
 const SYSTEM_PROMPT = `You are Tilly, a helpful calendar assistant. Your job is to parse natural language requests and extract calendar event information.
 
@@ -48,26 +46,31 @@ Current date and time: ${new Date().toISOString()}`;
 
 export const parseEventRequest = async (userMessage) => {
   console.log('parseEventRequest called with:', userMessage);
-  console.log('API Key available:', !!ANTHROPIC_API_KEY);
+  console.log('API Key available:', !!OPENAI_API_KEY);
   
   // Use dynamic URL that works in both dev and production
   const envBase = import.meta.env?.VITE_API_BASE;
   const API_BASE = envBase && !envBase.includes('localhost') ? envBase : `${window.location.protocol}//${window.location.host}`;
-  const PROXY_URL = `${API_BASE}/api/claude`;
+  const PROXY_URL = `${API_BASE}/api/openai`;
   
   try {
     console.log('Making API request via proxy server...');
     
     const requestBody = {
-      model: 'claude-3-5-haiku-20241022',
-      max_tokens: 1000,
-      system: SYSTEM_PROMPT,
+      model: 'gpt-4o-mini',
       messages: [
+        {
+          role: 'system',
+          content: SYSTEM_PROMPT
+        },
         {
           role: 'user',
           content: userMessage
         }
-      ]
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
+      response_format: { type: "json_object" }
     };
     
     console.log('Request body:', requestBody);
@@ -90,9 +93,9 @@ export const parseEventRequest = async (userMessage) => {
 
     const data = await response.json();
     console.log('API response data:', data);
-    const content = data.content[0].text;
+    const content = data.choices[0].message.content;
     
-    // Parse the JSON response from Claude
+    // Parse the JSON response from OpenAI
     try {
       const parsedResponse = JSON.parse(content);
       console.log('Parsed response:', parsedResponse);
@@ -106,7 +109,7 @@ export const parseEventRequest = async (userMessage) => {
       
       return parsedResponse;
     } catch (parseError) {
-      console.error('Failed to parse Claude response as JSON:', content);
+      console.error('Failed to parse OpenAI response as JSON:', content);
       return {
         intent: 'general',
         response: content // Return the raw response if it's not valid JSON
@@ -307,4 +310,4 @@ const getNextWeekday = (targetDay) => {
   const result = new Date(today);
   result.setDate(today.getDate() + daysUntilTarget);
   return result;
-}; 
+};

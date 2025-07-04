@@ -123,8 +123,8 @@ describe('Database Operations', () => {
       const eventData = {
         title: 'Test Event',
         start: new Date('2025-06-20T10:00:00Z'),
-        end: new Date('2025-06-20T11:00:00Z'),
-        color: '#4A7C2A'
+        end: new Date('2025-06-20T11:00:00Z')
+        // color will be randomly assigned
       };
 
       const result = await createEvent(eventData, testUserId);
@@ -141,8 +141,8 @@ describe('Database Operations', () => {
       const eventData = {
         title: 'Retrieve Test Event',
         start: new Date('2025-06-21T10:00:00Z'),
-        end: new Date('2025-06-21T11:00:00Z'),
-        color: '#4A7C2A'
+        end: new Date('2025-06-21T11:00:00Z')
+        // color will be randomly assigned
       };
 
       const createdEvent = await createEvent(eventData, testUserId);

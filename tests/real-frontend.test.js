@@ -59,7 +59,7 @@ describe('Real Frontend Integration', () => {
     });
   });
 
-  describe('Real Claude API Frontend', () => {
+  describe('Real OpenAI API Frontend', () => {
     test('should prepare context data safely', () => {
       // Test the context preparation logic
       const prepareContextForAI = (events, userMessage) => {

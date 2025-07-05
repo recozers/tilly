@@ -553,6 +553,594 @@ const isTimeSlotFree = async (startTime, endTime, userId) => {
   }
 };
 
+// ============================================
+// FRIEND SYSTEM FUNCTIONS
+// ============================================
+
+// Get user profile
+const getUserProfile = async (userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getUserProfile.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error && error.code === 'PGRST116') {
+      // No profile found, return null instead of throwing
+      return null;
+    }
+    
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    throw error;
+  }
+};
+
+// Update user profile
+const updateUserProfile = async (userId, profileData, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for updateUserProfile.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('user_profiles')
+      .update(profileData)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error updating user profile:', error);
+    throw error;
+  }
+};
+
+// Search users for friend requests
+const searchUsers = async (query, currentUserId, authenticatedSupabase = null) => {
+  if (!currentUserId) throw new Error('SECURITY: currentUserId is required for searchUsers.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('user_profiles')
+      .select('id, display_name, email, avatar_url')
+      .or(`display_name.ilike.%${query}%,email.ilike.%${query}%`)
+      .eq('allow_friend_requests', true)
+      .neq('id', currentUserId)
+      .limit(10);
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error searching users:', error);
+    throw error;
+  }
+};
+
+// Send friend request
+const sendFriendRequest = async (requesterId, addresseeId, authenticatedSupabase = null) => {
+  if (!requesterId) throw new Error('SECURITY: requesterId is required for sendFriendRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Check if request already exists
+    const { data: existing } = await supabaseClient
+      .from('friendships')
+      .select('id, status')
+      .or(`and(requester_id.eq.${requesterId},addressee_id.eq.${addresseeId}),and(requester_id.eq.${addresseeId},addressee_id.eq.${requesterId})`)
+      .single();
+
+    if (existing) {
+      throw new Error('Friend request already exists or users are already friends');
+    }
+
+    const { data, error } = await supabaseClient
+      .from('friendships')
+      .insert({
+        requester_id: requesterId,
+        addressee_id: addresseeId,
+        status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error sending friend request:', error);
+    throw error;
+  }
+};
+
+// Get friend requests (both sent and received)
+const getFriendRequests = async (userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getFriendRequests.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Get received requests
+    const { data: receivedRaw, error: receivedError } = await supabaseClient
+      .from('friendships')
+      .select('id, status, created_at, requester_id')
+      .eq('addressee_id', userId)
+      .eq('status', 'pending');
+
+    // Get sent requests
+    const { data: sentRaw, error: sentError } = await supabaseClient
+      .from('friendships')
+      .select('id, status, created_at, addressee_id')
+      .eq('requester_id', userId)
+      .eq('status', 'pending');
+
+    if (receivedError) throw receivedError;
+    if (sentError) throw sentError;
+
+    // Fetch profile data for received requests
+    const received = [];
+    if (receivedRaw && receivedRaw.length > 0) {
+      const requesterIds = receivedRaw.map(req => req.requester_id);
+      const { data: requesterProfiles, error: requesterError } = await supabaseClient
+        .from('user_profiles')
+        .select('id, display_name, email, avatar_url')
+        .in('id', requesterIds);
+
+      if (requesterError) throw requesterError;
+
+      for (const req of receivedRaw) {
+        const profile = requesterProfiles.find(p => p.id === req.requester_id);
+        if (profile) {
+          received.push({
+            ...req,
+            requester_profile: profile
+          });
+        }
+      }
+    }
+
+    // Fetch profile data for sent requests
+    const sent = [];
+    if (sentRaw && sentRaw.length > 0) {
+      const addresseeIds = sentRaw.map(req => req.addressee_id);
+      const { data: addresseeProfiles, error: addresseeError } = await supabaseClient
+        .from('user_profiles')
+        .select('id, display_name, email, avatar_url')
+        .in('id', addresseeIds);
+
+      if (addresseeError) throw addresseeError;
+
+      for (const req of sentRaw) {
+        const profile = addresseeProfiles.find(p => p.id === req.addressee_id);
+        if (profile) {
+          sent.push({
+            ...req,
+            addressee_profile: profile
+          });
+        }
+      }
+    }
+
+    return {
+      received,
+      sent
+    };
+  } catch (error) {
+    console.error('Error fetching friend requests:', error);
+    throw error;
+  }
+};
+
+// Accept friend request
+const acceptFriendRequest = async (requestId, userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for acceptFriendRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Use the database function for accepting friend requests
+    const { data, error } = await supabaseClient.rpc('accept_friend_request', {
+      request_id: requestId
+    });
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error accepting friend request:', error);
+    throw error;
+  }
+};
+
+// Decline friend request
+const declineFriendRequest = async (requestId, userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for declineFriendRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('friendships')
+      .update({ status: 'declined' })
+      .eq('id', requestId)
+      .eq('addressee_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error declining friend request:', error);
+    throw error;
+  }
+};
+
+// Get friends list
+const getFriends = async (userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getFriends.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Get friendships
+    const { data: friendships, error } = await supabaseClient
+      .from('friendships')
+      .select('id, created_at, requester_id, addressee_id')
+      .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
+      .eq('status', 'accepted');
+
+    if (error) throw error;
+
+    if (!friendships || friendships.length === 0) {
+      return [];
+    }
+
+    // Get all friend IDs (the other person in each friendship)
+    const friendIds = friendships.map(friendship => {
+      return friendship.requester_id === userId ? friendship.addressee_id : friendship.requester_id;
+    });
+
+    // Fetch friend profiles
+    const { data: profiles, error: profileError } = await supabaseClient
+      .from('user_profiles')
+      .select('id, display_name, email, avatar_url')
+      .in('id', friendIds);
+
+    if (profileError) throw profileError;
+
+    // Combine friendship data with profiles
+    return friendships.map(friendship => {
+      const friendId = friendship.requester_id === userId ? friendship.addressee_id : friendship.requester_id;
+      const friendProfile = profiles.find(p => p.id === friendId);
+      
+      return {
+        id: friendship.id,
+        created_at: friendship.created_at,
+        friend: friendProfile
+      };
+    }).filter(f => f.friend); // Remove any without profiles
+  } catch (error) {
+    console.error('Error fetching friends:', error);
+    throw error;
+  }
+};
+
+// Remove friend
+const removeFriend = async (friendshipId, userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for removeFriend.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { error } = await supabaseClient
+      .from('friendships')
+      .delete()
+      .eq('id', friendshipId)
+      .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`);
+
+    if (error) throw error;
+    return { success: true };
+  } catch (error) {
+    console.error('Error removing friend:', error);
+    throw error;
+  }
+};
+
+// Block user
+const blockUser = async (requesterId, addresseeId, authenticatedSupabase = null) => {
+  if (!requesterId) throw new Error('SECURITY: requesterId is required for blockUser.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('friendships')
+      .upsert({
+        requester_id: requesterId,
+        addressee_id: addresseeId,
+        status: 'blocked'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error blocking user:', error);
+    throw error;
+  }
+};
+
+// ============================================
+// MEETING REQUEST FUNCTIONS
+// ============================================
+
+// Create meeting request
+const createMeetingRequest = async (requestData, authenticatedSupabase = null) => {
+  if (!requestData.requester_id) throw new Error('SECURITY: requester_id is required for createMeetingRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('meeting_requests')
+      .insert(requestData)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error creating meeting request:', error);
+    throw error;
+  }
+};
+
+// Get meeting requests (both sent and received)
+const getMeetingRequests = async (userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getMeetingRequests.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Get received requests
+    const { data: received, error: receivedError } = await supabaseClient
+      .from('meeting_requests')
+      .select(`
+        *,
+        requester_profile:user_profiles!meeting_requests_requester_id_fkey(display_name, email, avatar_url)
+      `)
+      .eq('friend_id', userId)
+      .in('status', ['pending']);
+
+    // Get sent requests
+    const { data: sent, error: sentError } = await supabaseClient
+      .from('meeting_requests')
+      .select(`
+        *,
+        friend_profile:user_profiles!meeting_requests_friend_id_fkey(display_name, email, avatar_url)
+      `)
+      .eq('requester_id', userId)
+      .in('status', ['pending', 'accepted']);
+
+    if (receivedError) throw receivedError;
+    if (sentError) throw sentError;
+
+    return {
+      received: received || [],
+      sent: sent || []
+    };
+  } catch (error) {
+    console.error('Error fetching meeting requests:', error);
+    throw error;
+  }
+};
+
+// Respond to meeting request
+const respondToMeetingRequest = async (requestId, response, selectedTime, userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for respondToMeetingRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    const updateData = {
+      status: response,
+      selected_time: response === 'accepted' ? selectedTime : null
+    };
+
+    const { data, error } = await supabaseClient
+      .from('meeting_requests')
+      .update(updateData)
+      .eq('id', requestId)
+      .eq('friend_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error responding to meeting request:', error);
+    throw error;
+  }
+};
+
+// Cancel meeting request
+const cancelMeetingRequest = async (requestId, userId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for cancelMeetingRequest.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('meeting_requests')
+      .update({ status: 'cancelled' })
+      .eq('id', requestId)
+      .eq('requester_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error cancelling meeting request:', error);
+    throw error;
+  }
+};
+
+// ============================================
+// AVAILABILITY FUNCTIONS
+// ============================================
+
+// Get availability sharing settings
+const getAvailabilitySharing = async (userId, friendId, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getAvailabilitySharing.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('availability_sharing')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('friend_id', friendId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows returned
+    return data;
+  } catch (error) {
+    console.error('Error fetching availability sharing:', error);
+    throw error;
+  }
+};
+
+// Update availability sharing settings
+const updateAvailabilitySharing = async (userId, friendId, shareLevel, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for updateAvailabilitySharing.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    const { data, error } = await supabaseClient
+      .from('availability_sharing')
+      .upsert({
+        user_id: userId,
+        friend_id: friendId,
+        share_level: shareLevel
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Error updating availability sharing:', error);
+    throw error;
+  }
+};
+
+// Check user availability for specific time slots
+const checkUserAvailability = async (userId, timeSlots, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for checkUserAvailability.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    const availability = [];
+    
+    for (const slot of timeSlots) {
+      const { data: conflicts, error } = await supabaseClient
+        .from('events')
+        .select('id, title, start_time, end_time')
+        .eq('user_id', userId)
+        .lt('start_time', slot.end)
+        .gt('end_time', slot.start);
+
+      if (error) throw error;
+
+      availability.push({
+        start: slot.start,
+        end: slot.end,
+        available: conflicts.length === 0,
+        conflicts: conflicts
+      });
+    }
+
+    return availability;
+  } catch (error) {
+    console.error('Error checking user availability:', error);
+    throw error;
+  }
+};
+
+// Find mutual free time between two users
+const findMutualFreeTime = async (userId1, userId2, duration, startDate, endDate, authenticatedSupabase = null) => {
+  if (!userId1 || !userId2) throw new Error('SECURITY: Both user IDs are required for findMutualFreeTime.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Get all events for both users in the date range
+    const { data: user1Events, error: error1 } = await supabaseClient
+      .from('events')
+      .select('start_time, end_time')
+      .eq('user_id', userId1)
+      .gte('start_time', startDate)
+      .lte('end_time', endDate);
+
+    const { data: user2Events, error: error2 } = await supabaseClient
+      .from('events')
+      .select('start_time, end_time')
+      .eq('user_id', userId2)
+      .gte('start_time', startDate)
+      .lte('end_time', endDate);
+
+    if (error1) throw error1;
+    if (error2) throw error2;
+
+    // Combine all busy times
+    const allBusyTimes = [
+      ...(user1Events || []).map(e => ({ start: new Date(e.start_time), end: new Date(e.end_time) })),
+      ...(user2Events || []).map(e => ({ start: new Date(e.start_time), end: new Date(e.end_time) }))
+    ].sort((a, b) => a.start - b.start);
+
+    // Find free time slots
+    const freeSlots = [];
+    const durationMs = duration * 60 * 1000; // Convert minutes to milliseconds
+    
+    let currentTime = new Date(startDate);
+    const endDateTime = new Date(endDate);
+
+    // Only consider business hours (9 AM to 6 PM)
+    while (currentTime < endDateTime) {
+      const dayStart = new Date(currentTime);
+      dayStart.setHours(9, 0, 0, 0);
+      const dayEnd = new Date(currentTime);
+      dayEnd.setHours(18, 0, 0, 0);
+
+      let slotStart = dayStart;
+
+      // Check for conflicts and find free slots
+      for (const busyTime of allBusyTimes) {
+        if (busyTime.start >= dayEnd) break;
+        if (busyTime.end <= dayStart) continue;
+
+        // If there's a gap before this busy time
+        if (slotStart < busyTime.start && busyTime.start - slotStart >= durationMs) {
+          const slotEnd = new Date(Math.min(busyTime.start, dayEnd));
+          if (slotEnd - slotStart >= durationMs) {
+            freeSlots.push({
+              start: new Date(slotStart),
+              end: new Date(slotStart.getTime() + durationMs)
+            });
+          }
+        }
+
+        // Move past this busy time
+        slotStart = new Date(Math.max(slotStart, busyTime.end));
+      }
+
+      // Check for a slot at the end of the day
+      if (slotStart < dayEnd && dayEnd - slotStart >= durationMs) {
+        freeSlots.push({
+          start: new Date(slotStart),
+          end: new Date(slotStart.getTime() + durationMs)
+        });
+      }
+
+      // Move to next day
+      currentTime.setDate(currentTime.getDate() + 1);
+      currentTime.setHours(0, 0, 0, 0);
+    }
+
+    return freeSlots.slice(0, 5); // Return top 5 slots
+  } catch (error) {
+    console.error('Error finding mutual free time:', error);
+    throw error;
+  }
+};
+
 // Export all functions for CommonJS
 module.exports = {
   supabase,
@@ -573,5 +1161,26 @@ module.exports = {
   importEventsFromSubscription,
   getCalendarStats,
   isTimeSlotFree,
-  getEventById
+  getEventById,
+  // Friend system functions
+  getUserProfile,
+  updateUserProfile,
+  searchUsers,
+  sendFriendRequest,
+  getFriendRequests,
+  acceptFriendRequest,
+  declineFriendRequest,
+  getFriends,
+  removeFriend,
+  blockUser,
+  // Meeting request functions
+  createMeetingRequest,
+  getMeetingRequests,
+  respondToMeetingRequest,
+  cancelMeetingRequest,
+  // Availability functions
+  getAvailabilitySharing,
+  updateAvailabilitySharing,
+  checkUserAvailability,
+  findMutualFreeTime
 } 

@@ -16,6 +16,27 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
 
+  // Ensure user profile exists in the database
+  const ensureUserProfile = async (user, session) => {
+    if (!user || !session) return
+    
+    try {
+      // Try to fetch the profile first
+      const response = await fetch('/api/users/profile', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+      
+      // The endpoint will create a profile if it doesn't exist
+      if (response.ok) {
+        console.log('User profile ensured')
+      }
+    } catch (error) {
+      console.error('Error ensuring user profile:', error)
+    }
+  }
+
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
@@ -44,6 +65,8 @@ export const AuthProvider = ({ children }) => {
       // Handle specific auth events
       if (event === 'SIGNED_IN') {
         console.log('User signed in:', session?.user?.email)
+        // Ensure user profile exists
+        ensureUserProfile(session?.user, session)
       } else if (event === 'SIGNED_OUT') {
         console.log('User signed out')
       }

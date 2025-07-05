@@ -6,20 +6,60 @@
 .app-layout {
   display: flex;
   height: 100vh;
+  position: relative;
 }
 
 .calendar-section {
   flex: 1;
   padding: 20px;
   padding-right: 10px;
-  background-color: #f4f6f0;
+  background-color: #f1f5f3;
   overflow: auto;
+  transition: padding 0.3s ease;
+}
+
+.calendar-section.full-width {
+  padding-right: 20px;
+}
+
+.ai-toggle-arrow {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 60px;
+  background-color: #7c9a7e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  color: white;
+  user-select: none;
+  font-weight: bold;
+}
+
+.ai-toggle-arrow:hover {
+  background-color: #2f5233;
+  transform: translateY(-50%) scale(1.1);
+}
+
+.ai-toggle-arrow.open {
+  right: 350px;
+  border-radius: 8px 0 0 8px;
+}
+
+.ai-toggle-arrow.closed {
+  right: 0px;
+  border-radius: 0 8px 8px 0;
 }
 
 .ai-section {
   width: 350px;
-  border-left: 1px solid #c8d5c4;
-  background-color: #fefdf9;
+  border-left: 1px solid #d6ccc2;
+  background-color: #f1f5f3;
 }
 
 .calendar-header {
@@ -33,7 +73,7 @@
   margin: 0;
   font-size: 28px;
   font-weight: 700;
-  color: #2d4a2b;
+  color: #1b1f1e;
   letter-spacing: -0.02em;
 }
 
@@ -51,65 +91,88 @@
 .today-btn, .nav-btn, .refresh-btn, .import-btn {
   padding: 8px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease-out;
 }
 
 .today-btn {
-  background: linear-gradient(135deg, #4a6741, #6b8f62);
-  color: #fefdf9;
+  background-color: #7c9a7e;
+  color: white;
   font-weight: 600;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(74, 103, 65, 0.3);
-  transition: all 0.2s ease;
-  position: relative;
+  transition: all 0.2s ease-out;
   padding: 10px 20px;
+  border: 2px solid #7c9a7e;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 .today-btn:hover {
-  background: linear-gradient(135deg, #6b8f62, #87a072);
-  box-shadow: 0 4px 8px rgba(74, 103, 65, 0.4);
-  transform: translateY(-1px);
+  background-color: #2f5233;
+  border-color: #2f5233;
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
 }
 
 .today-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 4px rgba(74, 103, 65, 0.3);
+  background-color: #2f5233;
+  border-color: #2f5233;
+  transform: scale(0.98);
 }
 
 .nav-btn {
   background-color: transparent;
-  color: #2d4a2b;
+  color: #1b1f1e;
   border: none;
   font-size: 24px;
   padding: 8px 16px;
 }
 
 .refresh-btn {
-  background-color: #4a6741;
-  color: #fefdf9;
+  background-color: #7c9a7e;
+  color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background-color: #2f5233;
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
 }
 
 .refresh-btn:disabled {
-  background-color: #8b9a87;
+  background-color: #d6ccc2;
   cursor: not-allowed;
+  color: #1b1f1e;
+  opacity: 0.6;
 }
 
 .import-btn {
-  background-color: #6b8f62;
-  color: #fefdf9;
+  background-color: #7c9a7e;
+  color: white;
+  padding: 10px 20px;
+  font-weight: 600;
+  border: 2px solid #7c9a7e;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 .import-btn:hover:not(:disabled) {
-  background-color: #4a6741;
+  background-color: #2f5233;
+  border-color: #2f5233;
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
 }
 
 .import-btn:disabled {
-  background-color: #8b9a87;
+  background-color: #d6ccc2;
   cursor: not-allowed;
+  border-color: #d6ccc2;
+  color: #1b1f1e;
+  opacity: 0.6;
 }
 
 .import-dropdown {
@@ -126,8 +189,8 @@
   position: absolute;
   top: 100%;
   right: 0;
-  background-color: #fefdf9;
-  border: 1px solid #c8d5c4;
+  background-color: #f1f5f3;
+  border: 1px solid #d6ccc2;
   border-radius: 6px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   z-index: 100;
@@ -147,7 +210,7 @@
 }
 
 .import-options button:hover:not(:disabled) {
-  background-color: #f4f6f0;
+  background-color: #a3b18a;
 }
 
 .import-options button:first-child {
@@ -178,10 +241,10 @@
 .success-message {
   margin-bottom: 20px;
   padding: 12px 16px;
-  background-color: #eff4ed;
-  border: 1px solid #b8c7b3;
+  background-color: #a3b18a;
+  border: 1px solid #2f5233;
   border-radius: 8px;
-  color: #4a6741;
+  color: #1b1f1e;
   font-size: 14px;
   position: relative;
 }
@@ -227,7 +290,7 @@
 }
 
 .modal-content {
-  background-color: #fefdf9;
+  background-color: #f1f5f3;
   border-radius: 12px;
   padding: 24px;
   width: 500px;
@@ -245,7 +308,7 @@
 
 .modal-content p {
   margin: 0 0 16px 0;
-  color: #5a6b57;
+  color: #1b1f1e;
 }
 
 .url-input-container {
@@ -269,8 +332,8 @@
 }
 
 .modal-help {
-  background-color: #f4f6f0;
-  border: 1px solid #c8d5c4;
+  background-color: #f1f5f3;
+  border: 1px solid #d6ccc2;
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 20px;
@@ -280,7 +343,7 @@
 .modal-help strong {
   display: block;
   margin-bottom: 8px;
-  color: #2d4a2b;
+  color: #1b1f1e;
 }
 
 .modal-help ul {
@@ -290,7 +353,7 @@
 
 .modal-help li {
   margin-bottom: 4px;
-  color: #5a6b57;
+  color: #1b1f1e;
 }
 
 .modal-actions {

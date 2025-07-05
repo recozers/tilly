@@ -26,7 +26,28 @@ const {
   updateCalendarSync,
   deleteCalendarSubscription,
   importEventsFromSubscription,
-  getUpcomingEvents
+  getUpcomingEvents,
+  // Friend system functions
+  getUserProfile,
+  updateUserProfile,
+  searchUsers,
+  sendFriendRequest,
+  getFriendRequests,
+  acceptFriendRequest,
+  declineFriendRequest,
+  getFriends,
+  removeFriend,
+  blockUser,
+  // Meeting request functions
+  createMeetingRequest,
+  getMeetingRequests,
+  respondToMeetingRequest,
+  cancelMeetingRequest,
+  // Availability functions
+  getAvailabilitySharing,
+  updateAvailabilitySharing,
+  checkUserAvailability,
+  findMutualFreeTime
 } = require('./supabase.js');
 
 const app = express();
@@ -1192,6 +1213,84 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
             required: ["search_term"]
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "find_friends",
+          description: "Get the current user's friends list to see who they can book meetings with.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "find_mutual_free_time",
+          description: "Find available time slots when both the user and a friend are free for a meeting.",
+          parameters: {
+            type: "object",
+            properties: {
+              friend_name: {
+                type: "string",
+                description: "Name of the friend to find mutual time with"
+              },
+              duration_minutes: {
+                type: "integer",
+                description: "Duration of the meeting in minutes (default: 30)"
+              },
+              start_date: {
+                type: "string",
+                description: "Start of date range to search (YYYY-MM-DD)"
+              },
+              end_date: {
+                type: "string",
+                description: "End of date range to search (YYYY-MM-DD)"
+              }
+            },
+            required: ["friend_name", "start_date", "end_date"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "request_meeting_with_friend",
+          description: "Send a meeting request to a friend with proposed time slots.",
+          parameters: {
+            type: "object",
+            properties: {
+              friend_name: {
+                type: "string",
+                description: "Name of the friend to request a meeting with"
+              },
+              meeting_title: {
+                type: "string",
+                description: "Title for the meeting"
+              },
+              message: {
+                type: "string",
+                description: "Optional message to include with the meeting request"
+              },
+              duration_minutes: {
+                type: "integer",
+                description: "Duration of the meeting in minutes (default: 30)"
+              },
+              proposed_times: {
+                type: "array",
+                description: "Array of proposed meeting times in ISO format",
+                items: {
+                  type: "string",
+                  description: "Proposed start time (YYYY-MM-DDTHH:MM:SS)"
+                }
+              }
+            },
+            required: ["friend_name", "meeting_title", "proposed_times"]
+          }
+        }
       }
     ];
 
@@ -1388,6 +1487,15 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
               break;
             case 'search_events':
               toolResult = await executeSearchEvents(toolInput, req);
+              break;
+            case 'find_friends':
+              toolResult = await executeFindFriends(toolInput, req);
+              break;
+            case 'find_mutual_free_time':
+              toolResult = await executeFindMutualFreeTime(toolInput, req);
+              break;
+            case 'request_meeting_with_friend':
+              toolResult = await executeRequestMeetingWithFriend(toolInput, req);
               break;
             default:
               toolResult = { success: false, error: 'Unknown tool' };
@@ -1779,6 +1887,15 @@ Assistant:`;
             case 'analyze_schedule':
               result = await executeAnalyzeSchedule(toolInput, req);
               break;
+            case 'find_friends':
+              result = await executeFindFriends(toolInput, req);
+              break;
+            case 'find_mutual_free_time':
+              result = await executeFindMutualFreeTime(toolInput, req);
+              break;
+            case 'request_meeting_with_friend':
+              result = await executeRequestMeetingWithFriend(toolInput, req);
+              break;
             case 'get_calendar_events':
               result = await executeGetCalendarEvents(toolInput, req);
               break;
@@ -1947,6 +2064,15 @@ app.post('/api/ai/execute-tools', authenticateUser, async (req, res) => {
             break;
           case 'check_time_conflicts':
             result = await executeCheckTimeConflicts(tool.input, req);
+            break;
+          case 'find_friends':
+            result = await executeFindFriends(tool.input, req);
+            break;
+          case 'find_mutual_free_time':
+            result = await executeFindMutualFreeTime(tool.input, req);
+            break;
+          case 'request_meeting_with_friend':
+            result = await executeRequestMeetingWithFriend(tool.input, req);
             break;
           default:
             result = { success: false, error: `Unknown tool: ${tool.name}` };
@@ -2474,6 +2600,185 @@ async function executeSearchEvents(input, req) {
     return { 
       success: false,
       error: 'Failed to search events',
+      details: error.message 
+    };
+  }
+}
+
+// ============================================
+// FRIEND-BASED MEETING AI TOOL FUNCTIONS
+// ============================================
+
+async function executeFindFriends(input, req) {
+  try {
+    console.log('👥 Finding friends for user:', req.userId);
+    
+    const friends = await getFriends(req.userId, req.supabase);
+    
+    if (friends.length === 0) {
+      return {
+        success: true,
+        friends: [],
+        message: "You don't have any friends added yet. You can search for users and send friend requests to start booking meetings together."
+      };
+    }
+    
+    return {
+      success: true,
+      friends: friends.map(f => ({
+        id: f.friend.id,
+        name: f.friend.display_name,
+        email: f.friend.email
+      })),
+      count: friends.length,
+      message: `You have ${friends.length} friend${friends.length === 1 ? '' : 's'} you can book meetings with.`
+    };
+  } catch (error) {
+    console.error('Error in executeFindFriends:', error);
+    return { 
+      success: false,
+      error: 'Failed to retrieve friends list',
+      details: error.message 
+    };
+  }
+}
+
+async function executeFindMutualFreeTime(input, req) {
+  try {
+    const { friend_name, duration_minutes = 30, start_date, end_date } = input;
+    
+    console.log(`🕐 Finding mutual free time with "${friend_name}" for ${duration_minutes} minutes`);
+    
+    // First, find the friend by name
+    const friends = await getFriends(req.userId, req.supabase);
+    const friend = friends.find(f => 
+      f.friend.display_name.toLowerCase().includes(friend_name.toLowerCase()) ||
+      f.friend.email.toLowerCase().includes(friend_name.toLowerCase())
+    );
+    
+    if (!friend) {
+      return {
+        success: false,
+        error: `Friend "${friend_name}" not found. Make sure you're friends with this person first.`
+      };
+    }
+    
+    // Parse dates
+    const startDateTime = new Date(start_date + 'T00:00:00Z');
+    const endDateTime = new Date(end_date + 'T23:59:59Z');
+    
+    if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
+      return {
+        success: false,
+        error: 'Invalid date format. Use YYYY-MM-DD format.'
+      };
+    }
+    
+    // Find mutual free time
+    const freeSlots = await findMutualFreeTime(
+      req.userId,
+      friend.friend.id,
+      duration_minutes,
+      startDateTime.toISOString(),
+      endDateTime.toISOString(),
+      req.supabase
+    );
+    
+    if (freeSlots.length === 0) {
+      return {
+        success: true,
+        free_slots: [],
+        message: `No mutual free time found with ${friend.friend.display_name} between ${start_date} and ${end_date} for ${duration_minutes} minutes. Try a different date range or shorter duration.`
+      };
+    }
+    
+    return {
+      success: true,
+      friend_name: friend.friend.display_name,
+      duration_minutes,
+      free_slots: freeSlots.map(slot => ({
+        start: slot.start.toISOString(),
+        end: slot.end.toISOString(),
+        start_local: utcToLocal(slot.start.toISOString(), '12h', req.userTimeZone),
+        day: slot.start.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+      })),
+      message: `Found ${freeSlots.length} mutual free time slot${freeSlots.length === 1 ? '' : 's'} with ${friend.friend.display_name}.`
+    };
+  } catch (error) {
+    console.error('Error in executeFindMutualFreeTime:', error);
+    return { 
+      success: false,
+      error: 'Failed to find mutual free time',
+      details: error.message 
+    };
+  }
+}
+
+async function executeRequestMeetingWithFriend(input, req) {
+  try {
+    const { friend_name, meeting_title, message = '', duration_minutes = 30, proposed_times } = input;
+    
+    console.log(`📤 Requesting meeting "${meeting_title}" with "${friend_name}"`);
+    
+    // Find the friend by name
+    const friends = await getFriends(req.userId, req.supabase);
+    const friend = friends.find(f => 
+      f.friend.display_name.toLowerCase().includes(friend_name.toLowerCase()) ||
+      f.friend.email.toLowerCase().includes(friend_name.toLowerCase())
+    );
+    
+    if (!friend) {
+      return {
+        success: false,
+        error: `Friend "${friend_name}" not found. Make sure you're friends with this person first.`
+      };
+    }
+    
+    // Validate proposed times
+    if (!proposed_times || !Array.isArray(proposed_times) || proposed_times.length === 0) {
+      return {
+        success: false,
+        error: 'At least one proposed time is required for the meeting request.'
+      };
+    }
+    
+    // Convert proposed times to proper format and validate
+    const validatedTimes = [];
+    for (const timeStr of proposed_times) {
+      const proposedTime = new Date(timeStr);
+      if (isNaN(proposedTime.getTime())) {
+        return {
+          success: false,
+          error: `Invalid time format: "${timeStr}". Use ISO format like "2025-01-05T14:00:00".`
+        };
+      }
+      validatedTimes.push(proposedTime.toISOString());
+    }
+    
+    // Create the meeting request
+    const requestData = {
+      requester_id: req.userId,
+      friend_id: friend.friend.id,
+      title: meeting_title.trim(),
+      message: message.trim() || null,
+      duration_minutes,
+      proposed_times: validatedTimes,
+      status: 'pending'
+    };
+    
+    const meetingRequest = await createMeetingRequest(requestData, req.supabase);
+    
+    return {
+      success: true,
+      request: meetingRequest,
+      friend_name: friend.friend.display_name,
+      message: `Meeting request "${meeting_title}" sent to ${friend.friend.display_name} with ${validatedTimes.length} proposed time${validatedTimes.length === 1 ? '' : 's'}.`
+    };
+  } catch (error) {
+    console.error('Error in executeRequestMeetingWithFriend:', error);
+    return { 
+      success: false,
+      error: 'Failed to send meeting request',
       details: error.message 
     };
   }
@@ -3789,6 +4094,400 @@ function createFallbackResponse(query, context) {
   // Default response
   return `I'm currently experiencing some connectivity issues with my AI processing, but I can still help with basic calendar information! 📅\n\nYou have ${context.totalEvents} total events in your calendar. Try asking me about "today", "tomorrow", "upcoming events", or "this week" and I'll do my best to help while my full AI capabilities are restored.`;
 }
+
+// ============================================
+// FRIEND MANAGEMENT API ENDPOINTS
+// ============================================
+
+// Get current user's profile (creates one if it doesn't exist)
+app.get('/api/users/profile', authenticateUser, async (req, res) => {
+  try {
+    let profile = await getUserProfile(req.userId, req.supabase);
+    
+    // If profile doesn't exist, create one with default values
+    if (!profile) {
+      const { data: { user } } = await req.supabase.auth.getUser();
+      
+      const defaultProfile = {
+        id: req.userId,
+        display_name: user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User',
+        email: user?.email,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        allow_friend_requests: true,
+        public_availability: false,
+        default_meeting_duration: 30
+      };
+      
+      // Create the profile
+      await req.supabase
+        .from('user_profiles')
+        .insert(defaultProfile);
+      
+      profile = await getUserProfile(req.userId, req.supabase);
+    }
+    
+    res.json(profile);
+  } catch (error) {
+    console.error('❌ Error fetching/creating user profile:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+});
+
+// Update current user's profile
+app.put('/api/users/profile', authenticateUser, async (req, res) => {
+  try {
+    const { display_name, bio, timezone, allow_friend_requests, public_availability, default_meeting_duration } = req.body;
+    
+    const profileData = {};
+    if (display_name !== undefined) profileData.display_name = display_name;
+    if (bio !== undefined) profileData.bio = bio;
+    if (timezone !== undefined) profileData.timezone = timezone;
+    if (allow_friend_requests !== undefined) profileData.allow_friend_requests = allow_friend_requests;
+    if (public_availability !== undefined) profileData.public_availability = public_availability;
+    if (default_meeting_duration !== undefined) profileData.default_meeting_duration = default_meeting_duration;
+
+    const updatedProfile = await updateUserProfile(req.userId, profileData, req.supabase);
+    res.json(updatedProfile);
+  } catch (error) {
+    console.error('❌ Error updating user profile:', error);
+    res.status(500).json({ error: 'Failed to update user profile' });
+  }
+});
+
+// Search users
+app.get('/api/users/search', authenticateUser, async (req, res) => {
+  try {
+    const { q: query } = req.query;
+    
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+
+    const users = await searchUsers(query.trim(), req.userId, req.supabase);
+    res.json(users);
+  } catch (error) {
+    console.error('❌ Error searching users:', error);
+    res.status(500).json({ error: 'Failed to search users' });
+  }
+});
+
+// Send friend request
+app.post('/api/friends/request', authenticateUser, async (req, res) => {
+  try {
+    const { addressee_id } = req.body;
+    
+    if (!addressee_id) {
+      return res.status(400).json({ error: 'addressee_id is required' });
+    }
+
+    if (addressee_id === req.userId) {
+      return res.status(400).json({ error: 'Cannot send friend request to yourself' });
+    }
+
+    const friendRequest = await sendFriendRequest(req.userId, addressee_id, req.supabase);
+    res.json({ success: true, request: friendRequest });
+  } catch (error) {
+    console.error('❌ Error sending friend request:', error);
+    if (error.message.includes('already exists')) {
+      res.status(409).json({ error: 'Friend request already exists or users are already friends' });
+    } else {
+      res.status(500).json({ error: 'Failed to send friend request' });
+    }
+  }
+});
+
+// Get friend requests (sent and received)
+app.get('/api/friends/requests', authenticateUser, async (req, res) => {
+  try {
+    const requests = await getFriendRequests(req.userId, req.supabase);
+    res.json(requests);
+  } catch (error) {
+    console.error('❌ Error fetching friend requests:', error);
+    res.status(500).json({ error: 'Failed to fetch friend requests' });
+  }
+});
+
+// Accept friend request
+app.post('/api/friends/requests/:id/accept', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+
+    const result = await acceptFriendRequest(requestId, req.userId, req.supabase);
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('❌ Error accepting friend request:', error);
+    res.status(500).json({ error: 'Failed to accept friend request' });
+  }
+});
+
+// Decline friend request
+app.post('/api/friends/requests/:id/decline', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+
+    const result = await declineFriendRequest(requestId, req.userId, req.supabase);
+    res.json({ success: true, request: result });
+  } catch (error) {
+    console.error('❌ Error declining friend request:', error);
+    res.status(500).json({ error: 'Failed to decline friend request' });
+  }
+});
+
+// Get friends list
+app.get('/api/friends', authenticateUser, async (req, res) => {
+  try {
+    const friends = await getFriends(req.userId, req.supabase);
+    res.json(friends);
+  } catch (error) {
+    console.error('❌ Error fetching friends:', error);
+    res.status(500).json({ error: 'Failed to fetch friends' });
+  }
+});
+
+// Remove friend
+app.delete('/api/friends/:id', authenticateUser, async (req, res) => {
+  try {
+    const friendshipId = parseInt(req.params.id);
+    
+    if (isNaN(friendshipId)) {
+      return res.status(400).json({ error: 'Invalid friendship ID' });
+    }
+
+    const result = await removeFriend(friendshipId, req.userId, req.supabase);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error removing friend:', error);
+    res.status(500).json({ error: 'Failed to remove friend' });
+  }
+});
+
+// Block user
+app.post('/api/users/:id/block', authenticateUser, async (req, res) => {
+  try {
+    const addresseeId = req.params.id;
+    
+    if (addresseeId === req.userId) {
+      return res.status(400).json({ error: 'Cannot block yourself' });
+    }
+
+    const result = await blockUser(req.userId, addresseeId, req.supabase);
+    res.json({ success: true, block: result });
+  } catch (error) {
+    console.error('❌ Error blocking user:', error);
+    res.status(500).json({ error: 'Failed to block user' });
+  }
+});
+
+// ============================================
+// MEETING REQUEST API ENDPOINTS
+// ============================================
+
+// Create meeting request
+app.post('/api/meetings/request', authenticateUser, async (req, res) => {
+  try {
+    const { friend_id, title, message, duration_minutes, proposed_times } = req.body;
+    
+    if (!friend_id || !title || !proposed_times || !Array.isArray(proposed_times)) {
+      return res.status(400).json({ 
+        error: 'friend_id, title, and proposed_times array are required' 
+      });
+    }
+
+    // Verify users are friends
+    const friends = await getFriends(req.userId, req.supabase);
+    const isFriend = friends.some(f => f.friend.id === friend_id);
+    
+    if (!isFriend) {
+      return res.status(403).json({ error: 'Can only request meetings with friends' });
+    }
+
+    const requestData = {
+      requester_id: req.userId,
+      friend_id,
+      title: title.trim(),
+      message: message?.trim() || null,
+      duration_minutes: duration_minutes || 30,
+      proposed_times,
+      status: 'pending'
+    };
+
+    const meetingRequest = await createMeetingRequest(requestData, req.supabase);
+    res.json({ success: true, request: meetingRequest });
+  } catch (error) {
+    console.error('❌ Error creating meeting request:', error);
+    res.status(500).json({ error: 'Failed to create meeting request' });
+  }
+});
+
+// Get meeting requests (sent and received)
+app.get('/api/meetings/requests', authenticateUser, async (req, res) => {
+  try {
+    const requests = await getMeetingRequests(req.userId, req.supabase);
+    res.json(requests);
+  } catch (error) {
+    console.error('❌ Error fetching meeting requests:', error);
+    res.status(500).json({ error: 'Failed to fetch meeting requests' });
+  }
+});
+
+// Respond to meeting request (accept/decline)
+app.post('/api/meetings/requests/:id/respond', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    const { response, selected_time } = req.body;
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+
+    if (!['accepted', 'declined'].includes(response)) {
+      return res.status(400).json({ error: 'Response must be "accepted" or "declined"' });
+    }
+
+    if (response === 'accepted' && !selected_time) {
+      return res.status(400).json({ error: 'selected_time is required when accepting' });
+    }
+
+    const result = await respondToMeetingRequest(
+      requestId, 
+      response, 
+      response === 'accepted' ? selected_time : null, 
+      req.userId, 
+      req.supabase
+    );
+
+    // If accepted, create calendar events for both users
+    if (response === 'accepted') {
+      try {
+        // Create event for the requester
+        const requesterEvent = await createEvent({
+          title: result.title,
+          start: new Date(selected_time),
+          end: new Date(new Date(selected_time).getTime() + (result.duration_minutes * 60000)),
+          color: '#4A7C2A', // Green for meeting events
+          meeting_request_id: requestId
+        }, result.requester_id, req.supabase);
+
+        // Create event for the friend (current user)
+        const friendEvent = await createEvent({
+          title: result.title,
+          start: new Date(selected_time),
+          end: new Date(new Date(selected_time).getTime() + (result.duration_minutes * 60000)),
+          color: '#4A7C2A', // Green for meeting events
+          meeting_request_id: requestId
+        }, req.userId, req.supabase);
+
+        res.json({ 
+          success: true, 
+          request: result, 
+          events: { requester: requesterEvent, friend: friendEvent }
+        });
+      } catch (eventError) {
+        console.error('❌ Error creating calendar events:', eventError);
+        // Meeting request was accepted but calendar events failed
+        res.json({ 
+          success: true, 
+          request: result,
+          warning: 'Meeting accepted but calendar events could not be created'
+        });
+      }
+    } else {
+      res.json({ success: true, request: result });
+    }
+  } catch (error) {
+    console.error('❌ Error responding to meeting request:', error);
+    res.status(500).json({ error: 'Failed to respond to meeting request' });
+  }
+});
+
+// Cancel meeting request
+app.post('/api/meetings/requests/:id/cancel', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+
+    const result = await cancelMeetingRequest(requestId, req.userId, req.supabase);
+    res.json({ success: true, request: result });
+  } catch (error) {
+    console.error('❌ Error cancelling meeting request:', error);
+    res.status(500).json({ error: 'Failed to cancel meeting request' });
+  }
+});
+
+// Find mutual free time with a friend
+app.post('/api/availability/find-mutual-time', authenticateUser, async (req, res) => {
+  try {
+    const { friend_id, duration, start_date, end_date } = req.body;
+    
+    if (!friend_id || !duration || !start_date || !end_date) {
+      return res.status(400).json({ 
+        error: 'friend_id, duration, start_date, and end_date are required' 
+      });
+    }
+
+    // Verify users are friends
+    const friends = await getFriends(req.userId, req.supabase);
+    const isFriend = friends.some(f => f.friend.id === friend_id);
+    
+    if (!isFriend) {
+      return res.status(403).json({ error: 'Can only check availability with friends' });
+    }
+
+    const freeSlots = await findMutualFreeTime(
+      req.userId, 
+      friend_id, 
+      duration, 
+      start_date, 
+      end_date, 
+      req.supabase
+    );
+
+    res.json({ success: true, free_slots: freeSlots });
+  } catch (error) {
+    console.error('❌ Error finding mutual free time:', error);
+    res.status(500).json({ error: 'Failed to find mutual free time' });
+  }
+});
+
+// Get/Update availability sharing settings
+app.get('/api/availability/sharing/:friend_id', authenticateUser, async (req, res) => {
+  try {
+    const friendId = req.params.friend_id;
+    const settings = await getAvailabilitySharing(req.userId, friendId, req.supabase);
+    res.json(settings || { share_level: 'busy_free' }); // Default level
+  } catch (error) {
+    console.error('❌ Error fetching availability sharing:', error);
+    res.status(500).json({ error: 'Failed to fetch availability sharing settings' });
+  }
+});
+
+app.put('/api/availability/sharing/:friend_id', authenticateUser, async (req, res) => {
+  try {
+    const friendId = req.params.friend_id;
+    const { share_level } = req.body;
+    
+    if (!['none', 'busy_free', 'basic_details', 'full_details'].includes(share_level)) {
+      return res.status(400).json({ error: 'Invalid share_level' });
+    }
+
+    const settings = await updateAvailabilitySharing(req.userId, friendId, share_level, req.supabase);
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error('❌ Error updating availability sharing:', error);
+    res.status(500).json({ error: 'Failed to update availability sharing settings' });
+  }
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {

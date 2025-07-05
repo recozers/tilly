@@ -64,6 +64,7 @@ const App = () => {
   const [isSendingInvites, setIsSendingInvites] = useState(false)
   const [showEventConfirmation, setShowEventConfirmation] = useState(false)
   const [pendingEventData, setPendingEventData] = useState(null)
+  const [showAISection, setShowAISection] = useState(true)
 
   // Use the event layout hook for proper overlapping
   const eventsWithLayout = useEventLayout(events)
@@ -1153,7 +1154,7 @@ const App = () => {
   return (
     <div className="app">
       <div className="app-layout">
-        <div className="calendar-section">
+        <div className={`calendar-section ${!showAISection ? 'full-width' : ''}`}>
           <div className="calendar-header">
             <div className="user-section">
               {user ? (
@@ -1223,6 +1224,8 @@ const App = () => {
                   </div>
                 )}
               </div>
+              
+
             </div>
           </div>
 
@@ -2025,33 +2028,46 @@ const App = () => {
           </div>
         </div>
 
-        <div className="ai-section">
-          {/* Chat Section */}
-          <div style={{ 
-            width: '100%', 
-            display: 'flex', 
-            flexDirection: 'column',
-            backgroundColor: '#ffffff',
-            height: '100%'
-          }}>
+        {/* AI Toggle Arrow */}
+        <div 
+          className={`ai-toggle-arrow ${showAISection ? 'open' : 'closed'}`}
+          onClick={() => setShowAISection(!showAISection)}
+          style={{
+            transform: 'translateY(-50%)'
+          }}
+          title={showAISection ? "Hide AI Assistant" : "Show AI Assistant"}
+        >
+          {showAISection ? '›' : '‹'}
+        </div>
+
+        {showAISection && (
+          <div className="ai-section">
+            {/* Chat Section */}
+            <div style={{ 
+              width: '100%', 
+              display: 'flex', 
+              flexDirection: 'column',
+              backgroundColor: '#ffffff',
+              height: '100%'
+            }}>
             {/* Chat Header */}
             <div style={{ 
               padding: '20px', 
-              borderBottom: '1px solid #e5e7eb',
-              backgroundColor: '#f9fafb'
+              borderBottom: '1px solid #d6ccc2',
+              backgroundColor: '#7c9a7e'
             }}>
               <h2 style={{ 
                 margin: 0, 
                 fontSize: '18px', 
                 fontWeight: 600, 
-                color: '#1f2937' 
+                color: 'white' 
               }}>
                 Tilly
               </h2>
               <p style={{ 
                 margin: '4px 0 0 0', 
                 fontSize: '14px', 
-                color: '#6b7280' 
+                color: '#edf2eb' 
               }}>
                 Ask me about your calendar
               </p>
@@ -2076,19 +2092,19 @@ const App = () => {
                       wordWrap: 'break-word',
                       marginLeft: message.sender === 'user' ? 'auto' : '0',
                       marginRight: message.sender === 'user' ? '0' : 'auto',
-                      backgroundColor: message.isSuccess ? '#d1fae5' : 
+                      backgroundColor: message.isSuccess ? '#a3b18a' : 
                                      message.isError ? '#fee2e2' : 
-                                     message.isComplex ? '#f0f9ff' : // Light blue for complex queries
-                                     message.sender === 'user' ? '#87A96B' : '#f3f4f6',
-                      color: message.isSuccess ? '#065f46' :
+                                     message.isComplex ? '#dce5dc' : // Light moss for complex queries
+                                     message.sender === 'user' ? '#7c9a7e' : '#F4F1E8',
+                      color: message.isSuccess ? '#1b1f1e' :
                              message.isError ? '#dc2626' :
-                             message.isComplex ? '#0c4a6e' : // Darker blue for complex queries
-                             message.sender === 'user' ? 'white' : '#1f2937',
+                             message.isComplex ? '#1b1f1e' : // Deep charcoal for complex queries
+                             message.sender === 'user' ? 'white' : '#1b1f1e',
                       fontSize: '14px',
                       lineHeight: '1.4',
-                      border: message.isSuccess ? '1px solid #a7f3d0' :
+                      border: message.isSuccess ? '1px solid #a3b18a' :
                               message.isError ? '1px solid #fca5a5' : 
-                              message.isComplex ? '1px solid #bae6fd' : 'none' // Blue border for complex queries
+                              message.isComplex ? '1px solid #d6ccc2' : 'none' // Bark brown border for complex queries
                     }}
                   >
                     {message.text}
@@ -2107,7 +2123,7 @@ const App = () => {
                           key={index}
                           onClick={() => handleSmartAction(suggestion)}
                           style={{
-                            background: 'linear-gradient(135deg, #4a6741 0%, #6b8f62 100%)',
+                            background: '#7c9a7e',
                             color: 'white',
                             border: 'none',
                             borderRadius: '8px',
@@ -2115,16 +2131,18 @@ const App = () => {
                             fontSize: '14px',
                             fontWeight: '500',
                             cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: '0 2px 4px rgba(74, 103, 65, 0.2)'
+                            transition: 'all 0.2s ease-out',
+                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.08)'
                           }}
                           onMouseEnter={(e) => {
-                            e.target.style.transform = 'translateY(-1px)';
-                            e.target.style.boxShadow = '0 4px 8px rgba(74, 103, 65, 0.3)';
+                            e.target.style.transform = 'scale(1.02)';
+                            e.target.style.backgroundColor = '#2f5233';
+                            e.target.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.12)';
                           }}
                           onMouseLeave={(e) => {
-                            e.target.style.transform = 'translateY(0)';
-                            e.target.style.boxShadow = '0 2px 4px rgba(74, 103, 65, 0.2)';
+                            e.target.style.transform = 'scale(1)';
+                            e.target.style.backgroundColor = '#7c9a7e';
+                            e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.08)';
                           }}
                         >
                           {suggestion.buttonText}
@@ -2140,8 +2158,8 @@ const App = () => {
                   padding: '12px',
                   borderRadius: '12px',
                   maxWidth: '85%',
-                  backgroundColor: '#f3f4f6',
-                  color: '#6b7280',
+                  backgroundColor: '#F4F1E8',
+                  color: '#1b1f1e',
                   fontSize: '14px',
                   fontStyle: 'italic'
                 }}>
@@ -2156,8 +2174,8 @@ const App = () => {
             {/* Input Section */}
             <div style={{ 
               padding: '16px', 
-              borderTop: '1px solid #e5e7eb',
-              backgroundColor: '#f9fafb'
+              borderTop: '1px solid #d6ccc2',
+              backgroundColor: '#f1f5f3'
             }}>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
@@ -2170,11 +2188,12 @@ const App = () => {
                   style={{
                     flex: 1,
                     padding: '10px 12px',
-                    border: '1px solid #d1d5db',
+                    border: '1px solid #d6ccc2',
                     borderRadius: '8px',
                     fontSize: '14px',
                     outline: 'none',
-                    backgroundColor: isProcessing ? '#f3f4f6' : 'white'
+                    backgroundColor: isProcessing ? '#f1f5f3' : 'white',
+                    color: '#1b1f1e'
                   }}
                 />
                 <button
@@ -2182,13 +2201,14 @@ const App = () => {
                   disabled={isProcessing || inputMessage.trim() === ''}
                   style={{
                     padding: '10px 16px',
-                    backgroundColor: isProcessing || inputMessage.trim() === '' ? '#9ca3af' : '#87A96B',
+                    backgroundColor: isProcessing || inputMessage.trim() === '' ? '#d6ccc2' : '#7c9a7e',
                     color: 'white',
                     border: 'none',
                     borderRadius: '8px',
                     fontSize: '14px',
                     cursor: isProcessing || inputMessage.trim() === '' ? 'not-allowed' : 'pointer',
-                    fontWeight: 500
+                    fontWeight: 500,
+                    transition: 'all 0.2s ease-out'
                   }}
                 >
                   Send
@@ -2197,6 +2217,7 @@ const App = () => {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Event Confirmation Modal */}

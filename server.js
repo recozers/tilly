@@ -1700,10 +1700,10 @@ THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.star
     const smartPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
 
 ⚠️ CRITICAL RULES:
-1. When user wants to "meet", "book a meeting", or "schedule" with a friend → ALWAYS output request_meeting_with_friend pattern
-2. When user wants a personal reminder/event → output CREATE_EVENT pattern  
-3. You CANNOT invite people directly - you MUST provide the action pattern so the user gets a button
-4. NEVER say you've "scheduled" or "invited" someone - say you'll provide a button to do so
+1. When user wants to "meet", "book", or "schedule" with a friend → IMMEDIATELY output request_meeting_with_friend pattern
+2. When user wants personal reminders/events → output CREATE_EVENT pattern
+3. Be brief - no tool explanations or verbose responses
+4. Don't mention "tools", "patterns", or "outlined events" - just say you're sending the request
 
 📅 CURRENT DATE & TIME CONTEXT:
 - TODAY is ${todayStr}
@@ -1723,17 +1723,15 @@ ${eventsContext}${conversationHistory}
 
 User: ${message}
 
-When the user wants to schedule something, respond in this EXACT format:
+ALWAYS respond with ONE brief sentence, then immediately add the action pattern:
 
-For meeting with friends:
-"I can schedule that meeting with [Friend] for you.
-request_meeting_with_friend: {friend: "[Name]", date: "YYYY-MM-DD", time: "HH:MM", title: "Meeting with [Name]", duration: 30}"
+"book meeting with stuart tomorrow at 5" → "I'll send Stuart a meeting request for tomorrow at 5 PM.
+request_meeting_with_friend: {friend: "Stuart", date: "${tomorrowStr}", time: "17:00", title: "Meeting with Stuart", duration: 30}"
 
-For personal events:
-"I'll create that event for you.
-CREATE_EVENT: {title: "Event", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}"
+"remind me to call mom" → "I'll add that reminder.
+CREATE_EVENT: {title: "Call mom", date: "${todayStr}", time: "14:00", duration: 30}"
 
-You MUST include the action line - no exceptions!`;
+ONE sentence + action pattern only!`;
 
     console.log('🤖 Making streamlined OpenAI request...');
     console.log('🔍 DEBUG: OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
@@ -1815,11 +1813,8 @@ function classifyRequest(message) {
     /busiest (day|week|month)/i,
     /overlap(ping)? (meetings|events)/i,
     /recurring (meetings|events)/i,
-    // Meeting scheduling with other people
-    /(schedule|book|set up|arrange).*(meeting|meet).*(with|and)/i, // "schedule meeting with Stuart"
-    /(meet|meeting).*(with|and)/i, // "meeting with Stuart"
-    /request.*(meeting|meet)/i, // "request meeting"
     /find.*(mutual|free).*time/i // "find mutual free time"
+    // NOTE: Removed meeting scheduling patterns - these should use simple flow for auto-execution
   ];
   
   // Simple queries that should use context

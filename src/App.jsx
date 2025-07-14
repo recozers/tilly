@@ -574,7 +574,7 @@ const App = () => {
           if (toolResult.success) {
             const successMessage = {
               id: Date.now().toString(),
-              text: `✅ ${toolResult.message || `Meeting request sent to ${suggestion.friend_name}!`}`,
+              text: `✅ Meeting request sent to ${suggestion.friend_name}!`,
               sender: 'bot',
               timestamp: new Date(),
               isSuccess: true
@@ -1175,14 +1175,14 @@ const App = () => {
 
       const data = await response.json()
       
-      // Create bot message with appropriate UI based on response type
+      // Create bot message with suggestions (buttons)
       const botMessage = {
         id: (Date.now() + 1).toString(),
         text: data.response,
         sender: 'bot',
         timestamp: new Date(),
-        suggestions: data.suggestions || [], // Smart action suggestions for simple requests
-        isComplex: data.isComplex || false, // Mark complex queries differently
+        suggestions: data.suggestions || [],
+        isComplex: data.isComplex || false,
         isStreaming: false
       }
       
@@ -1892,7 +1892,7 @@ const App = () => {
                                 paddingRight: '2px',
                                 backgroundColor: event.type === 'meeting_request' ? (event.color || '#e8f5e9') : event.color,
                                 border: event.type === 'meeting_request' ? `2px solid ${event.borderColor || '#4a6741'}` : 'none',
-                                color: event.type === 'meeting_request' ? '#1b5e20' : 'white',
+                                color: (event.type === 'meeting_request' || event.type === 'sent_meeting_request') ? '#1b5e20' : 'white',
                                 boxShadow: event.type === 'meeting_request' ? '0 2px 4px rgba(74,103,65,0.3)' : 'none',
                                 borderRadius: '4px',
                                 padding: '4px 6px',
@@ -2063,7 +2063,7 @@ const App = () => {
                                           textOverflow: 'ellipsis',
                                           whiteSpace: 'nowrap',
                                           fontSize: '12px',
-                                          color: event.type === 'meeting_request' ? '#1b5e20' : (event.color === '#F4F1E8' ? '#1f2937' : 'white')
+                                          color: (event.type === 'meeting_request' || event.type === 'sent_meeting_request') ? '#1b5e20' : (event.color === '#F4F1E8' ? '#1f2937' : 'white')
                                         }}
                                         onMouseEnter={(e) => {
                                           e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'
@@ -2078,7 +2078,7 @@ const App = () => {
                                         fontSize: '10px', 
                                         opacity: 0.9, 
                                         paddingLeft: '4px',
-                                        color: event.type === 'meeting_request' ? '#2e7d32' : (event.color === '#F4F1E8' ? 'rgba(31, 41, 55, 0.7)' : 'rgba(255, 255, 255, 0.9)')
+                                        color: (event.type === 'meeting_request' || event.type === 'sent_meeting_request') ? '#2e7d32' : (event.color === '#F4F1E8' ? 'rgba(31, 41, 55, 0.7)' : 'rgba(255, 255, 255, 0.9)')
                                       }}>
                                         {eventStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         {duration >= 60 && ` - ${eventEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}

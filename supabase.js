@@ -122,41 +122,61 @@ const getAllEvents = async (userId, authenticatedSupabase = null) => {
       });
     }
 
-    // Check for accepted meeting requests where user is the requester
-    const { data: acceptedRequests, error: acceptedError } = await client
+    // Check for meeting requests where user is the requester (both pending and accepted)
+    const { data: sentRequests, error: sentError } = await client
       .from('meeting_requests')
       .select('*')
       .eq('requester_id', userId)
-      .eq('status', 'accepted');
+      .in('status', ['pending', 'accepted']);
 
-    if (!acceptedError && acceptedRequests && acceptedRequests.length > 0) {
-      // Create events for accepted meetings that don't already exist
-      for (const request of acceptedRequests) {
-        const existingEvent = events.find(e => 
-          e.title === request.title && 
-          Math.abs(new Date(e.start_time).getTime() - new Date(request.selected_time).getTime()) < 60000
-        );
-        
-        if (!existingEvent) {
-          try {
-            const newEvent = await createEvent({
-              title: request.title,
-              start: new Date(request.selected_time),
-              end: new Date(new Date(request.selected_time).getTime() + (request.duration_minutes * 60000)),
-              color: '#4A7C2A'
-            }, userId, client);
+    if (!sentError && sentRequests && sentRequests.length > 0) {
+      for (const request of sentRequests) {
+        if (request.status === 'accepted' && request.selected_time) {
+          // Create events for accepted meetings that don't already exist
+          const existingEvent = events.find(e => 
+            e.title === request.title && 
+            Math.abs(new Date(e.start_time).getTime() - new Date(request.selected_time).getTime()) < 60000
+          );
+          
+          if (!existingEvent) {
+            try {
+              const newEvent = await createEvent({
+                title: request.title,
+                start: new Date(request.selected_time),
+                end: new Date(new Date(request.selected_time).getTime() + (request.duration_minutes * 60000)),
+                color: '#4A7C2A'
+              }, userId, client);
+              
+              // Add to regular events so it shows up
+              regularEvents.push({
+                id: newEvent.id,
+                title: newEvent.title,
+                start: newEvent.start,
+                end: newEvent.end,
+                color: newEvent.color,
+                type: 'event'
+              });
+            } catch (error) {
+              console.error('Error creating event for accepted meeting:', error);
+            }
+          }
+        } else if (request.status === 'pending') {
+          // Show pending meetings as light green events for the requester
+          for (const proposedTime of request.proposed_times) {
+            const start = new Date(proposedTime);
+            const end = new Date(start.getTime() + (request.duration_minutes * 60000));
             
-            // Add to regular events so it shows up
-            regularEvents.push({
-              id: newEvent.id,
-              title: newEvent.title,
-              start: newEvent.start,
-              end: newEvent.end,
-              color: newEvent.color,
-              type: 'event'
+            proposedEvents.push({
+              id: `sent-request-${request.id}-${proposedTime}`,
+              title: `📤 ${request.title} (pending)`,
+              start: start,
+              end: end,
+              type: 'sent_meeting_request',
+              meetingRequestId: request.id,
+              color: '#e8f5e9',
+              borderColor: '#4a6741',
+              isProposed: true
             });
-          } catch (error) {
-            console.error('Error creating event for accepted meeting:', error);
           }
         }
       }

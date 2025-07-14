@@ -2942,17 +2942,25 @@ async function executeRequestMeetingWithFriend(input, req) {
       };
     }
     
-    // Convert proposed times to proper format and validate
+    // Convert proposed times to proper format and validate using timezone conversion
     const validatedTimes = [];
     for (const timeStr of proposed_times) {
-      const proposedTime = new Date(timeStr);
-      if (isNaN(proposedTime.getTime())) {
+      try {
+        // Use the same timezone conversion logic as regular events
+        const proposedTime = convertLocalTimeToUTC(timeStr, req.userTimeZone);
+        if (isNaN(proposedTime.getTime())) {
+          return {
+            success: false,
+            error: `Invalid time format: "${timeStr}". Use ISO format like "2025-01-05T14:00:00".`
+          };
+        }
+        validatedTimes.push(proposedTime.toISOString());
+      } catch (error) {
         return {
           success: false,
-          error: `Invalid time format: "${timeStr}". Use ISO format like "2025-01-05T14:00:00".`
+          error: `Invalid time format: "${timeStr}". ${error.message}`
         };
       }
-      validatedTimes.push(proposedTime.toISOString());
     }
     
     // Create the meeting request
@@ -4674,6 +4682,7 @@ app.post('/api/meetings/requests/:id/accept', authenticateUser, async (req, res)
     );
 
     // Create calendar event for the accepting user
+    // Note: selected_time is already in UTC format from the frontend (.toISOString())
     const eventStart = new Date(selected_time);
     const eventEnd = new Date(eventStart.getTime() + (result.duration_minutes * 60000));
     

@@ -71,6 +71,7 @@ const App = () => {
 
   // Ref for auto-scrolling chat
   const messagesEndRef = useRef(null)
+  const userProfileRef = useRef(null)
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -122,6 +123,22 @@ const App = () => {
 
     return () => clearInterval(interval)
   }, [])
+
+  // Handle click outside user profile to close it
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (userProfileRef.current && !userProfileRef.current.contains(event.target)) {
+        setShowUserProfile(false)
+      }
+    }
+
+    if (showUserProfile) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [showUserProfile])
 
   const loadEvents = async () => {
     try {
@@ -525,6 +542,52 @@ const App = () => {
         } else {
           throw new Error(`Could not find event "${suggestion.eventTitle}"`);
         }
+      } else if (suggestion.type === 'request_meeting_with_friend') {
+        // Send meeting request to friend
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        const response = await fetch('/api/ai/execute-tools', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            tools: [{
+              name: 'request_meeting_with_friend',
+              input: {
+                friend_name: suggestion.friend_name,
+                meeting_title: suggestion.meeting_title,
+                message: suggestion.message,
+                duration_minutes: suggestion.duration_minutes,
+                proposed_times: suggestion.proposed_times
+              }
+            }],
+            userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          })
+        })
+        
+        if (response.ok) {
+          const result = await response.json()
+          const toolResult = result.results[0]
+          
+          if (toolResult.success) {
+            const successMessage = {
+              id: Date.now().toString(),
+              text: `✅ ${toolResult.message || `Meeting request sent to ${suggestion.friend_name}!`}`,
+              sender: 'bot',
+              timestamp: new Date(),
+              isSuccess: true
+            };
+            setMessages(prev => [...prev, successMessage]);
+            // Refresh events to show any changes
+            await loadEvents()
+          } else {
+            throw new Error(toolResult.error || 'Failed to send meeting request')
+          }
+        } else {
+          throw new Error('Failed to send meeting request')
+        }
       }
     } catch (error) {
       console.error('Error executing smart action:', error);
@@ -907,6 +970,107 @@ const App = () => {
     setInviteMessage('')
   }
 
+  // Meeting request functions
+  const handleAcceptMeeting = async (meetingRequestId, proposedTimeIndex) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      // Find the meeting request event to get the proposed time
+      const meetingEvent = events.find(e => 
+        e.type === 'meeting_request' && 
+        e.meetingRequestId === meetingRequestId && 
+        e.proposedTimeIndex === proposedTimeIndex
+      )
+      
+      if (!meetingEvent) {
+        setError('Meeting request not found')
+        return
+      }
+
+      const response = await fetch(`/api/meetings/requests/${meetingRequestId}/accept`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          selected_time: meetingEvent.start instanceof Date ? meetingEvent.start.toISOString() : new Date(meetingEvent.start).toISOString()
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to accept meeting request')
+      }
+
+      const result = await response.json()
+      console.log('✅ Meeting acceptance result:', result)
+      
+      // Show success message
+      setSuccessMessage('Meeting accepted!')
+      
+      // Refresh events to show the new confirmed event
+      setTimeout(async () => {
+        await loadEvents()
+      }, 500)
+      
+      // Add a message to the chat
+      const startDate = meetingEvent.start instanceof Date ? meetingEvent.start : new Date(meetingEvent.start)
+      const systemMessage = {
+        id: Date.now().toString(),
+        text: `✅ Meeting "${meetingEvent.title.replace(' (proposed by ', ' with ').replace(')', '')}" accepted for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        sender: 'bot',
+        timestamp: new Date(),
+        isSuccess: true
+      }
+      setMessages(prev => [...prev, systemMessage])
+    } catch (error) {
+      console.error('Error accepting meeting:', error)
+      setError('Failed to accept meeting request')
+    }
+  }
+
+  const handleDeclineMeeting = async (meetingRequestId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch(`/api/meetings/requests/${meetingRequestId}/decline`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to decline meeting request')
+      }
+
+      // Show success message
+      setSuccessMessage('Meeting request declined')
+      
+      // Refresh events to remove the proposed meetings
+      await loadEvents()
+      
+      // Add a message to the chat
+      const meetingEvent = events.find(e => 
+        e.type === 'meeting_request' && 
+        e.meetingRequestId === meetingRequestId
+      )
+      
+      if (meetingEvent) {
+        addMessage({
+          id: Date.now().toString(),
+          content: `❌ Meeting request "${meetingEvent.title.replace(' (proposed by ', ' from ').replace(')', '')}" declined`,
+          type: 'system',
+          timestamp: new Date()
+        })
+      }
+    } catch (error) {
+      console.error('Error declining meeting:', error)
+      setError('Failed to decline meeting request')
+    }
+  }
+
   const addEmailField = () => {
     setInviteEmails([...inviteEmails, ''])
   }
@@ -1167,7 +1331,7 @@ const App = () => {
                     {user.user_metadata?.display_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || 'U'}
                   </button>
                   {showUserProfile && (
-                    <div className="user-profile-dropdown-container">
+                    <div className="user-profile-dropdown-container" ref={userProfileRef}>
                       <UserProfile onClose={() => setShowUserProfile(false)} />
                     </div>
                   )}
@@ -1726,13 +1890,15 @@ const App = () => {
                                 height: `${dimensions.height}px`,
                                 paddingLeft: '2px',
                                 paddingRight: '2px',
-                                backgroundColor: event.color,
-                                color: 'white',
+                                backgroundColor: event.type === 'meeting_request' ? (event.color || '#e8f5e9') : event.color,
+                                border: event.type === 'meeting_request' ? `2px solid ${event.borderColor || '#4a6741'}` : 'none',
+                                color: event.type === 'meeting_request' ? '#1b5e20' : 'white',
+                                boxShadow: event.type === 'meeting_request' ? '0 2px 4px rgba(74,103,65,0.3)' : 'none',
                                 borderRadius: '4px',
                                 padding: '4px 6px',
                                 fontSize: '12px',
                                 fontWeight: '500',
-                                cursor: 'grab',
+                                cursor: event.type === 'meeting_request' ? 'pointer' : 'grab',
                                 zIndex: isBeingDragged ? 1000 : (useOverlapLayout ? layoutEvent.zIndex : 100),
                                 overflow: 'hidden',
                                 boxShadow: isBeingDragged 
@@ -1879,12 +2045,14 @@ const App = () => {
                                       <div 
                                         className="event-title"
                                         onClick={() => {
-                                          setEditingEventId(event.id)
-                                          setEditingTitle(event.title)
+                                          if (event.type !== 'meeting_request') {
+                                            setEditingEventId(event.id)
+                                            setEditingTitle(event.title)
+                                          }
                                         }}
                                         style={{ 
                                           fontWeight: '600', 
-                                          cursor: 'pointer',
+                                          cursor: event.type === 'meeting_request' ? 'default' : 'pointer',
                                           padding: '2px 4px',
                                           borderRadius: '2px',
                                           transition: 'background-color 0.2s',
@@ -1895,7 +2063,7 @@ const App = () => {
                                           textOverflow: 'ellipsis',
                                           whiteSpace: 'nowrap',
                                           fontSize: '12px',
-                                          color: event.color === '#F4F1E8' ? '#1f2937' : 'white'
+                                          color: event.type === 'meeting_request' ? '#1b5e20' : (event.color === '#F4F1E8' ? '#1f2937' : 'white')
                                         }}
                                         onMouseEnter={(e) => {
                                           e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'
@@ -1910,7 +2078,7 @@ const App = () => {
                                         fontSize: '10px', 
                                         opacity: 0.9, 
                                         paddingLeft: '4px',
-                                        color: event.color === '#F4F1E8' ? 'rgba(31, 41, 55, 0.7)' : 'rgba(255, 255, 255, 0.9)'
+                                        color: event.type === 'meeting_request' ? '#2e7d32' : (event.color === '#F4F1E8' ? 'rgba(31, 41, 55, 0.7)' : 'rgba(255, 255, 255, 0.9)')
                                       }}>
                                         {eventStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         {duration >= 60 && ` - ${eventEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
@@ -1925,95 +2093,176 @@ const App = () => {
                                   gap: '2px',
                                   flexShrink: 0 // Prevents buttons from shrinking
                                 }}>
-                                  {dimensions.widthPercentage > 35 && (
-                                    <div
-                                      className="invite-button"
-                                      onClick={() => {
-                                        handleInviteEvent(event.id)
-                                      }}
-                                      style={{
-                                        width: '16px',
-                                        height: '16px',
-                                        backgroundColor: 'rgba(74, 124, 42, 0.8)',
-                                        borderRadius: '50%',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '8px',
-                                        cursor: 'pointer',
-                                        opacity: 0,
-                                        transition: 'opacity 0.2s',
-                                        zIndex: 20,
-                                        pointerEvents: 'auto'
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(74, 124, 42, 1)'
-                                        e.target.style.opacity = '1'
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(74, 124, 42, 0.8)'
-                                        e.target.style.opacity = '0'
-                                      }}
-                                    >
-                                      ✉️
-                                    </div>
+                                  {event.type === 'meeting_request' ? (
+                                    <>
+                                      {/* Accept button */}
+                                      <div
+                                        className="accept-meeting-button"
+                                        onClick={() => {
+                                          handleAcceptMeeting(event.meetingRequestId, event.proposedTimeIndex)
+                                        }}
+                                        style={{
+                                          width: '24px',
+                                          height: '24px',
+                                          backgroundColor: '#22c55e',
+                                          borderRadius: '6px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          fontSize: '12px',
+                                          fontWeight: 'bold',
+                                          color: 'white',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.2s',
+                                          zIndex: 20,
+                                          pointerEvents: 'auto',
+                                          boxShadow: '0 2px 4px rgba(34, 197, 94, 0.4)',
+                                          border: '1px solid rgba(255, 255, 255, 0.3)'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.target.style.backgroundColor = '#16a34a'
+                                          e.target.style.transform = 'scale(1.1)'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.target.style.backgroundColor = '#22c55e'
+                                          e.target.style.transform = 'scale(1)'
+                                        }}
+                                        title="Accept meeting request"
+                                      >
+                                        ✓
+                                      </div>
+                                      {/* Decline button */}
+                                      <div
+                                        className="decline-meeting-button"
+                                        onClick={() => {
+                                          handleDeclineMeeting(event.meetingRequestId)
+                                        }}
+                                        style={{
+                                          width: '24px',
+                                          height: '24px',
+                                          backgroundColor: '#ef4444',
+                                          borderRadius: '6px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          fontSize: '12px',
+                                          fontWeight: 'bold',
+                                          color: 'white',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.2s',
+                                          zIndex: 20,
+                                          pointerEvents: 'auto',
+                                          boxShadow: '0 2px 4px rgba(239, 68, 68, 0.4)',
+                                          border: '1px solid rgba(255, 255, 255, 0.3)'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.target.style.backgroundColor = '#dc2626'
+                                          e.target.style.transform = 'scale(1.1)'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.target.style.backgroundColor = '#ef4444'
+                                          e.target.style.transform = 'scale(1)'
+                                        }}
+                                        title="Decline meeting request"
+                                      >
+                                        ×
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {dimensions.widthPercentage > 35 && (
+                                        <div
+                                          className="invite-button"
+                                          onClick={() => {
+                                            handleInviteEvent(event.id)
+                                          }}
+                                          style={{
+                                            width: '16px',
+                                            height: '16px',
+                                            backgroundColor: 'rgba(74, 124, 42, 0.8)',
+                                            borderRadius: '50%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '8px',
+                                            cursor: 'pointer',
+                                            opacity: 0,
+                                            transition: 'opacity 0.2s',
+                                            zIndex: 20,
+                                            pointerEvents: 'auto'
+                                          }}
+                                          onMouseEnter={(e) => {
+                                            e.target.style.backgroundColor = 'rgba(74, 124, 42, 1)'
+                                            e.target.style.opacity = '1'
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.target.style.backgroundColor = 'rgba(74, 124, 42, 0.8)'
+                                            e.target.style.opacity = '0'
+                                          }}
+                                        >
+                                          ✉️
+                                        </div>
+                                      )}
+                                      
+                                      <div
+                                        className="delete-button"
+                                        onClick={() => {
+                                          deleteEvent(event.id)
+                                        }}
+                                        style={{
+                                          width: dimensions.widthPercentage > 35 ? '16px' : '14px',
+                                          height: dimensions.widthPercentage > 35 ? '16px' : '14px',
+                                          backgroundColor: 'rgba(220, 38, 38, 0.8)',
+                                          borderRadius: '50%',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          fontSize: dimensions.widthPercentage > 35 ? '10px' : '8px',
+                                          cursor: 'pointer',
+                                          opacity: 0,
+                                          transition: 'opacity 0.2s',
+                                          zIndex: 20,
+                                          pointerEvents: 'auto'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.target.style.backgroundColor = 'rgba(220, 38, 38, 1)'
+                                          e.target.style.opacity = '1'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.target.style.backgroundColor = 'rgba(220, 38, 38, 0.8)'
+                                          e.target.style.opacity = '0'
+                                        }}
+                                      >
+                                        ×
+                                      </div>
+                                    </>
                                   )}
-                                  
-                                  <div
-                                    className="delete-button"
-                                    onClick={() => {
-                                      deleteEvent(event.id)
-                                    }}
-                                    style={{
-                                      width: dimensions.widthPercentage > 35 ? '16px' : '14px',
-                                      height: dimensions.widthPercentage > 35 ? '16px' : '14px',
-                                      backgroundColor: 'rgba(220, 38, 38, 0.8)',
-                                      borderRadius: '50%',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: dimensions.widthPercentage > 35 ? '10px' : '8px',
-                                      cursor: 'pointer',
-                                      opacity: 0,
-                                      transition: 'opacity 0.2s',
-                                      zIndex: 20,
-                                      pointerEvents: 'auto'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      e.target.style.backgroundColor = 'rgba(220, 38, 38, 1)'
-                                      e.target.style.opacity = '1'
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.target.style.backgroundColor = 'rgba(220, 38, 38, 0.8)'
-                                      e.target.style.opacity = '0'
-                                    }}
-                                  >
-                                    ×
-                                  </div>
                                 </div>
                               </div>
 
-                              {/* Bottom resize handle */}
-                              <div
-                                onMouseDown={(e) => handleBottomResizeMouseDown(e, event)}
-                                onMouseEnter={(e) => {
-                                  e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)'
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.target.style.backgroundColor = 'transparent'
-                                }}
-                                style={{
-                                  position: 'absolute',
-                                  bottom: '0',
-                                  left: '2px',
-                                  right: '2px',
-                                  height: '6px',
-                                  cursor: 'ns-resize',
-                                  backgroundColor: 'transparent',
-                                  zIndex: 15,
-                                  transition: 'background-color 0.2s'
-                                }}
-                              />
+                              {/* Bottom resize handle - not for meeting requests */}
+                              {event.type !== 'meeting_request' && (
+                                <div
+                                  onMouseDown={(e) => handleBottomResizeMouseDown(e, event)}
+                                  onMouseEnter={(e) => {
+                                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)'
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.target.style.backgroundColor = 'transparent'
+                                  }}
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: '0',
+                                    left: '2px',
+                                    right: '2px',
+                                    height: '6px',
+                                    cursor: 'ns-resize',
+                                    backgroundColor: 'transparent',
+                                    zIndex: 15,
+                                    transition: 'background-color 0.2s'
+                                  }}
+                                />
+                              )}
                               
 
                             </div>
@@ -2118,36 +2367,78 @@ const App = () => {
                       flexDirection: 'column',
                       gap: '8px'
                     }}>
-                      {message.suggestions.map((suggestion, index) => (
-                        <button
-                          key={index}
-                          onClick={() => handleSmartAction(suggestion)}
-                          style={{
-                            background: '#7c9a7e',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '8px',
-                            padding: '10px 16px',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease-out',
-                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.08)'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.target.style.transform = 'scale(1.02)';
-                            e.target.style.backgroundColor = '#2f5233';
-                            e.target.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.12)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.target.style.transform = 'scale(1)';
-                            e.target.style.backgroundColor = '#7c9a7e';
-                            e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.08)';
-                          }}
-                        >
-                          {suggestion.buttonText}
-                        </button>
-                      ))}
+                      {message.suggestions.map((suggestion, index) => {
+                        // Determine if this is a friend-related action
+                        const isFriendAction = suggestion.buttonText?.toLowerCase().includes('friend') || 
+                                             suggestion.buttonText?.toLowerCase().includes('meeting') ||
+                                             suggestion.buttonText?.toLowerCase().includes('invite') ||
+                                             suggestion.type === 'friend_meeting' ||
+                                             suggestion.type === 'request_meeting_with_friend';
+                        
+                        return (
+                          <button
+                            key={index}
+                            onClick={() => handleSmartAction(suggestion)}
+                            style={{
+                              background: isFriendAction ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : '#7c9a7e',
+                              color: 'white',
+                              border: isFriendAction ? '2px solid #a78bfa' : 'none',
+                              borderRadius: '8px',
+                              padding: '10px 16px',
+                              fontSize: '14px',
+                              fontWeight: '500',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease-out',
+                              boxShadow: isFriendAction 
+                                ? '0 4px 12px rgba(139, 92, 246, 0.3)' 
+                                : '0 2px 4px rgba(0, 0, 0, 0.08)',
+                              position: 'relative',
+                              overflow: 'hidden'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.transform = 'scale(1.02)';
+                              if (isFriendAction) {
+                                e.target.style.background = 'linear-gradient(135deg, #4f46e5, #7c3aed)';
+                                e.target.style.boxShadow = '0 6px 16px rgba(139, 92, 246, 0.4)';
+                              } else {
+                                e.target.style.backgroundColor = '#2f5233';
+                                e.target.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.12)';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.transform = 'scale(1)';
+                              if (isFriendAction) {
+                                e.target.style.background = 'linear-gradient(135deg, #6366f1, #8b5cf6)';
+                                e.target.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+                              } else {
+                                e.target.style.backgroundColor = '#7c9a7e';
+                                e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.08)';
+                              }
+                            }}
+                          >
+                            {isFriendAction && (
+                              <span style={{ 
+                                marginRight: '6px',
+                                fontSize: '12px'
+                              }}>👥</span>
+                            )}
+                            {suggestion.buttonText}
+                            {isFriendAction && (
+                              <span style={{
+                                position: 'absolute',
+                                top: '-2px',
+                                right: '-2px',
+                                width: '8px',
+                                height: '8px',
+                                background: '#fbbf24',
+                                borderRadius: '50%',
+                                boxShadow: '0 0 6px rgba(251, 191, 36, 0.6)',
+                                animation: 'pulse 2s infinite'
+                              }}></span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

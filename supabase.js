@@ -30,22 +30,140 @@ const getAllEvents = async (userId, authenticatedSupabase = null) => {
   if (!userId) throw new Error('SECURITY: userId is required for getAllEvents.');
   try {
     const client = authenticatedSupabase || supabase;
-    const { data, error } = await client
+    
+    // Get regular events (last 6 months to next 6 months for performance)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const sixMonthsFromNow = new Date();
+    sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+    
+    const { data: events, error: eventsError } = await client
       .from('events')
       .select('*')
       .eq('user_id', userId) // HARDENED: Always filter by user_id
+      .gte('start_time', sixMonthsAgo.toISOString())
+      .lte('start_time', sixMonthsFromNow.toISOString())
       .order('start_time', { ascending: true });
 
-    if (error) throw error;
+    if (eventsError) throw eventsError;
 
-    // Convert to frontend format
-    return data.map(row => ({
+    // Get pending meeting requests where user is the friend (recipient)
+    const { data: meetingRequests, error: requestsError } = await client
+      .from('meeting_requests')
+      .select(`
+        id,
+        title,
+        message,
+        duration_minutes,
+        proposed_times,
+        requester_id
+      `)
+      .eq('friend_id', userId)
+      .eq('status', 'pending');
+
+    if (requestsError) throw requestsError;
+
+    // Fetch requester profiles manually if we have meeting requests
+    if (meetingRequests && meetingRequests.length > 0) {
+      const requesterIds = [...new Set(meetingRequests.map(req => req.requester_id))];
+      const { data: requesterProfiles, error: profilesError } = await client
+        .from('user_profiles')
+        .select('id, display_name, email')
+        .in('id', requesterIds);
+
+      if (!profilesError && requesterProfiles) {
+        meetingRequests.forEach(request => {
+          const profile = requesterProfiles.find(p => p.id === request.requester_id);
+          request.requester = profile;
+        });
+      }
+    }
+
+    // Convert regular events to frontend format
+    const regularEvents = events.map(row => ({
       id: row.id,
       title: row.title,
       start: new Date(row.start_time),
       end: new Date(row.end_time),
-      color: row.color
+      color: row.color,
+      type: 'event'
     }));
+
+    // Convert meeting requests to outlined events
+    const proposedEvents = [];
+    if (meetingRequests && meetingRequests.length > 0) {
+      meetingRequests.forEach((request) => {
+        // Create an event for each proposed time
+        if (request.proposed_times && Array.isArray(request.proposed_times)) {
+          request.proposed_times.forEach((proposedTime, index) => {
+            const start = new Date(proposedTime.start || proposedTime);
+            const duration = request.duration_minutes || 30;
+            const end = new Date(start.getTime() + duration * 60000);
+            
+            if (!isNaN(start.getTime())) {  // Only add if valid date
+              const requesterName = request.requester?.display_name || request.requester?.email || `User ${request.requester_id}`;
+              proposedEvents.push({
+                id: `meeting-request-${request.id}-${index}`,
+                title: `📅 ${request.title} - ${requesterName}`,
+                start: start,
+                end: end,
+                type: 'meeting_request',
+                meetingRequestId: request.id,
+                requesterName: requesterName,
+                message: request.message,
+                proposedTimeIndex: index,
+                color: '#e8f5e9',
+                borderColor: '#4a6741',
+                isProposed: true
+              });
+            }
+          });
+        }
+      });
+    }
+
+    // Check for accepted meeting requests where user is the requester
+    const { data: acceptedRequests, error: acceptedError } = await client
+      .from('meeting_requests')
+      .select('*')
+      .eq('requester_id', userId)
+      .eq('status', 'accepted');
+
+    if (!acceptedError && acceptedRequests && acceptedRequests.length > 0) {
+      // Create events for accepted meetings that don't already exist
+      for (const request of acceptedRequests) {
+        const existingEvent = events.find(e => 
+          e.title === request.title && 
+          Math.abs(new Date(e.start_time).getTime() - new Date(request.selected_time).getTime()) < 60000
+        );
+        
+        if (!existingEvent) {
+          try {
+            const newEvent = await createEvent({
+              title: request.title,
+              start: new Date(request.selected_time),
+              end: new Date(new Date(request.selected_time).getTime() + (request.duration_minutes * 60000)),
+              color: '#4A7C2A'
+            }, userId, client);
+            
+            // Add to regular events so it shows up
+            regularEvents.push({
+              id: newEvent.id,
+              title: newEvent.title,
+              start: newEvent.start,
+              end: newEvent.end,
+              color: newEvent.color,
+              type: 'event'
+            });
+          } catch (error) {
+            console.error('Error creating event for accepted meeting:', error);
+          }
+        }
+      }
+    }
+
+    // Combine and return all events
+    return [...regularEvents, ...proposedEvents];
   } catch (error) {
     console.error('Error fetching events:', error);
     throw error;
@@ -160,13 +278,50 @@ const deleteEvent = async (id, userId, authenticatedSupabase = null) => {
   if (!userId) throw new Error('SECURITY: userId is required for deleteEvent.');
   try {
     const supabaseClient = authenticatedSupabase || supabase;
+    
+    // First get the event to check if it's a meeting
+    const { data: event } = await supabaseClient
+      .from('events')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    // Delete the event
     const { error } = await supabaseClient
       .from('events')
       .delete()
       .eq('id', id)
-      .eq('user_id', userId); // HARDENED: Always filter by user_id
+      .eq('user_id', userId);
 
     if (error) throw error;
+
+    // If this was a meeting event, also delete/cancel the meeting request
+    if (event) {
+      // Look for meeting requests that match this event
+      const { data: meetingRequests } = await supabaseClient
+        .from('meeting_requests')
+        .select('*')
+        .eq('title', event.title)
+        .eq('status', 'accepted')
+        .or(`requester_id.eq.${userId},friend_id.eq.${userId}`);
+
+      // Delete matching meeting requests to prevent recreation
+      if (meetingRequests && meetingRequests.length > 0) {
+        for (const request of meetingRequests) {
+          const eventTime = new Date(event.start_time).getTime();
+          const requestTime = new Date(request.selected_time).getTime();
+          
+          // If times match (within 1 minute), delete the meeting request
+          if (Math.abs(eventTime - requestTime) < 60000) {
+            await supabaseClient
+              .from('meeting_requests')
+              .delete()
+              .eq('id', request.id);
+          }
+        }
+      }
+    }
 
     return { deletedId: id };
   } catch (error) {
@@ -873,6 +1028,8 @@ const blockUser = async (requesterId, addresseeId, authenticatedSupabase = null)
 const createMeetingRequest = async (requestData, authenticatedSupabase = null) => {
   if (!requestData.requester_id) throw new Error('SECURITY: requester_id is required for createMeetingRequest.');
   try {
+    console.log(`📤 DEBUGGING: createMeetingRequest called with:`, requestData);
+    
     const supabaseClient = authenticatedSupabase || supabase;
     const { data, error } = await supabaseClient
       .from('meeting_requests')
@@ -880,10 +1037,12 @@ const createMeetingRequest = async (requestData, authenticatedSupabase = null) =
       .select()
       .single();
 
+    console.log(`📤 DEBUGGING: Meeting request insert result:`, { data, error });
+
     if (error) throw error;
     return data;
   } catch (error) {
-    console.error('Error creating meeting request:', error);
+    console.error('📤 DEBUGGING: Error creating meeting request:', error);
     throw error;
   }
 };
@@ -897,25 +1056,51 @@ const getMeetingRequests = async (userId, authenticatedSupabase = null) => {
     // Get received requests
     const { data: received, error: receivedError } = await supabaseClient
       .from('meeting_requests')
-      .select(`
-        *,
-        requester_profile:user_profiles!meeting_requests_requester_id_fkey(display_name, email, avatar_url)
-      `)
+      .select('*')
       .eq('friend_id', userId)
       .in('status', ['pending']);
 
     // Get sent requests
     const { data: sent, error: sentError } = await supabaseClient
       .from('meeting_requests')
-      .select(`
-        *,
-        friend_profile:user_profiles!meeting_requests_friend_id_fkey(display_name, email, avatar_url)
-      `)
+      .select('*')
       .eq('requester_id', userId)
       .in('status', ['pending', 'accepted']);
 
     if (receivedError) throw receivedError;
     if (sentError) throw sentError;
+
+    // Fetch requester profiles for received requests
+    if (received && received.length > 0) {
+      const requesterIds = [...new Set(received.map(req => req.requester_id))];
+      const { data: requesterProfiles, error: requesterProfilesError } = await supabaseClient
+        .from('user_profiles')
+        .select('id, display_name, email, avatar_url')
+        .in('id', requesterIds);
+
+      if (!requesterProfilesError && requesterProfiles) {
+        received.forEach(request => {
+          const profile = requesterProfiles.find(p => p.id === request.requester_id);
+          request.requester_profile = profile;
+        });
+      }
+    }
+
+    // Fetch friend profiles for sent requests
+    if (sent && sent.length > 0) {
+      const friendIds = [...new Set(sent.map(req => req.friend_id))];
+      const { data: friendProfiles, error: friendProfilesError } = await supabaseClient
+        .from('user_profiles')
+        .select('id, display_name, email, avatar_url')
+        .in('id', friendIds);
+
+      if (!friendProfilesError && friendProfiles) {
+        sent.forEach(request => {
+          const profile = friendProfiles.find(p => p.id === request.friend_id);
+          request.friend_profile = profile;
+        });
+      }
+    }
 
     return {
       received: received || [],

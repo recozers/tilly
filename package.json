@@ -19,7 +19,8 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:real": "jest --config jest.real.config.js",
-    "test:mock": "jest --config package.json"
+    "test:mock": "jest --config package.json",
+    "populate-profiles": "node populate-user-profiles.js"
   },
   "dependencies": {
     "@supabase/auth-helpers-react": "^0.5.0",

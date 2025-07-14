@@ -5,14 +5,49 @@ import Friends from '../Friends/Friends'
 import './UserProfile.css'
 
 const UserProfile = ({ onClose }) => {
-  const { user, signOut, updateProfile } = useAuth()
+  const { user, signOut } = useAuth()
   const [isEditing, setIsEditing] = useState(false)
-  const [displayName, setDisplayName] = useState(user?.user_metadata?.display_name || '')
+  const [profile, setProfile] = useState(null)
+  const [formData, setFormData] = useState({
+    display_name: '',
+    bio: '',
+    timezone: '',
+    allow_friend_requests: true,
+    public_availability: false,
+    default_meeting_duration: 30
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [showFriends, setShowFriends] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+
+  // Fetch user profile from backend
+  const fetchUserProfile = async () => {
+    try {
+      const session = await supabase.auth.getSession()
+      const response = await fetch('/api/users/profile', {
+        headers: {
+          'Authorization': `Bearer ${session.data.session?.access_token}`
+        }
+      })
+      
+      if (response.ok) {
+        const profileData = await response.json()
+        setProfile(profileData)
+        setFormData({
+          display_name: profileData.display_name || '',
+          bio: profileData.bio || '',
+          timezone: profileData.timezone || '',
+          allow_friend_requests: profileData.allow_friend_requests !== undefined ? profileData.allow_friend_requests : true,
+          public_availability: profileData.public_availability !== undefined ? profileData.public_availability : false,
+          default_meeting_duration: profileData.default_meeting_duration || 30
+        })
+      }
+    } catch (error) {
+      console.error('Error fetching user profile:', error)
+    }
+  }
 
   // Fetch pending friend requests count
   const fetchPendingRequestsCount = async () => {
@@ -33,9 +68,10 @@ const UserProfile = ({ onClose }) => {
     }
   }
 
-  // Load pending requests count when component mounts
+  // Load profile and pending requests count when component mounts
   useEffect(() => {
     if (user) {
+      fetchUserProfile()
       fetchPendingRequestsCount()
     }
   }, [user])
@@ -56,18 +92,37 @@ const UserProfile = ({ onClose }) => {
     setSuccess('')
 
     try {
-      const { error } = await updateProfile({
-        display_name: displayName
+      const session = await supabase.auth.getSession()
+      const response = await fetch('/api/users/profile', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${session.data.session?.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(formData)
       })
-      if (error) throw error
       
-      setSuccess('Profile updated successfully!')
-      setIsEditing(false)
+      if (response.ok) {
+        const updatedProfile = await response.json()
+        setProfile(updatedProfile)
+        setSuccess('Profile updated successfully!')
+        setIsEditing(false)
+      } else {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to update profile')
+      }
     } catch (error) {
       setError(error.message)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }))
   }
 
   const getInitials = (name, email) => {
@@ -81,14 +136,14 @@ const UserProfile = ({ onClose }) => {
   }
 
   const getDisplayName = () => {
-    return user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'
+    return profile?.display_name || user?.email?.split('@')[0] || 'User'
   }
 
   return (
     <div className="user-profile-dropdown">
       <div className="user-profile-header">
         <div className="user-avatar">
-          {getInitials(user?.user_metadata?.display_name, user?.email)}
+          {getInitials(profile?.display_name, user?.email)}
         </div>
         <div className="user-info">
           <div className="user-name">{getDisplayName()}</div>
@@ -106,12 +161,93 @@ const UserProfile = ({ onClose }) => {
             <input
               type="text"
               id="displayName"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              value={formData.display_name}
+              onChange={(e) => handleInputChange('display_name', e.target.value)}
               placeholder="Enter your display name"
               disabled={loading}
             />
           </div>
+          
+          <div className="form-group">
+            <label htmlFor="bio">Bio</label>
+            <textarea
+              id="bio"
+              value={formData.bio}
+              onChange={(e) => handleInputChange('bio', e.target.value)}
+              placeholder="Tell others about yourself"
+              disabled={loading}
+              rows={3}
+            />
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="timezone">Timezone</label>
+            <select
+              id="timezone"
+              value={formData.timezone}
+              onChange={(e) => handleInputChange('timezone', e.target.value)}
+              disabled={loading}
+            >
+              <option value="">Select timezone</option>
+              <option value="America/New_York">Eastern Time (ET)</option>
+              <option value="America/Chicago">Central Time (CT)</option>
+              <option value="America/Denver">Mountain Time (MT)</option>
+              <option value="America/Los_Angeles">Pacific Time (PT)</option>
+              <option value="America/Phoenix">Arizona Time (MST)</option>
+              <option value="America/Anchorage">Alaska Time (AKST)</option>
+              <option value="Pacific/Honolulu">Hawaii Time (HST)</option>
+              <option value="UTC">UTC</option>
+              <option value="Europe/London">London (GMT)</option>
+              <option value="Europe/Paris">Paris (CET)</option>
+              <option value="Europe/Berlin">Berlin (CET)</option>
+              <option value="Asia/Tokyo">Tokyo (JST)</option>
+              <option value="Asia/Shanghai">Shanghai (CST)</option>
+              <option value="Asia/Kolkata">India (IST)</option>
+              <option value="Australia/Sydney">Sydney (AEST)</option>
+            </select>
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="meetingDuration">Default Meeting Duration (minutes)</label>
+            <select
+              id="meetingDuration"
+              value={formData.default_meeting_duration}
+              onChange={(e) => handleInputChange('default_meeting_duration', parseInt(e.target.value))}
+              disabled={loading}
+            >
+              <option value={15}>15 minutes</option>
+              <option value={30}>30 minutes</option>
+              <option value={45}>45 minutes</option>
+              <option value={60}>1 hour</option>
+              <option value={90}>1.5 hours</option>
+              <option value={120}>2 hours</option>
+            </select>
+          </div>
+          
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={formData.allow_friend_requests}
+                onChange={(e) => handleInputChange('allow_friend_requests', e.target.checked)}
+                disabled={loading}
+              />
+              Allow others to send friend requests
+            </label>
+          </div>
+          
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={formData.public_availability}
+                onChange={(e) => handleInputChange('public_availability', e.target.checked)}
+                disabled={loading}
+              />
+              Share availability with friends
+            </label>
+          </div>
+          
           <div className="form-actions">
             <button
               type="button"
@@ -120,7 +256,17 @@ const UserProfile = ({ onClose }) => {
                 setIsEditing(false)
                 setError('')
                 setSuccess('')
-                setDisplayName(user?.user_metadata?.display_name || '')
+                // Reset form to current profile data
+                if (profile) {
+                  setFormData({
+                    display_name: profile.display_name || '',
+                    bio: profile.bio || '',
+                    timezone: profile.timezone || '',
+                    allow_friend_requests: profile.allow_friend_requests !== undefined ? profile.allow_friend_requests : true,
+                    public_availability: profile.public_availability !== undefined ? profile.public_availability : false,
+                    default_meeting_duration: profile.default_meeting_duration || 30
+                  })
+                }
               }}
               disabled={loading}
             >

@@ -1110,7 +1110,7 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
         type: "function",
         function: {
           name: "create_event",
-          description: "Create a new calendar event. Always check for conflicts first using get_calendar_events.",
+          description: "Create a new calendar event for the current user only. For meetings with friends, use request_meeting_with_friend instead. Always check for conflicts first using get_calendar_events.",
           parameters: {
           type: "object",
           properties: {
@@ -1259,7 +1259,7 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
         type: "function",
         function: {
           name: "request_meeting_with_friend",
-          description: "Send a meeting request to a friend with proposed time slots.",
+          description: "Send a meeting request to a friend with proposed time slots. Use this instead of create_event when scheduling meetings with other people.",
           parameters: {
             type: "object",
             properties: {
@@ -1281,14 +1281,27 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
               },
               proposed_times: {
                 type: "array",
-                description: "Array of proposed meeting times in ISO format",
+                description: "Array of proposed meeting times in ISO format (YYYY-MM-DDTHH:MM:SS). Must include at least one time.",
                 items: {
                   type: "string",
-                  description: "Proposed start time (YYYY-MM-DDTHH:MM:SS)"
-                }
+                  description: "Proposed start time (YYYY-MM-DDTHH:MM:SS) - example: '2025-07-14T15:00:00'"
+                },
+                minItems: 1
               }
             },
             required: ["friend_name", "meeting_title", "proposed_times"]
+          }
+        }
+      },
+      {
+        type: "function", 
+        function: {
+          name: "get_friends_list",
+          description: "Get the list of user's friends to check if someone is a friend before scheduling meetings.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: []
           }
         }
       }
@@ -1337,6 +1350,14 @@ app.post('/api/ai/chat', authenticateUser, async (req, res) => {
     });
     
     const systemPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
+
+⚠️ CRITICAL TOOL USAGE RULES:
+- When user wants to meet with another person (friend/colleague) → ALWAYS use 'request_meeting_with_friend' tool
+- When user wants personal reminders/events → use 'create_event' tool  
+- NEVER use 'create_event' for meetings with other people
+- Example: "schedule meeting with Stuart" → use 'request_meeting_with_friend'
+- Example: "remind me to call mom" → use 'create_event'
+- Always check existing events before scheduling
 
 📅 CURRENT DATE & TIME CONTEXT:
 - TODAY is ${currentDate}
@@ -1418,6 +1439,8 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
     };
 
     console.log('🤖 Making OpenAI API request with tools...');
+    console.log('🤖 Tools being sent:', JSON.stringify(tools, null, 2));
+    console.log('🤖 Suggestion mode:', suggestionMode);
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -1437,8 +1460,15 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
     const openaiData = await response.json();
     const choice = openaiData.choices[0];
     
+    console.log('🤖 OpenAI response choice:', JSON.stringify(choice, null, 2));
+    
     // Check if OpenAI wants to use tools
     const hasToolCalls = choice.message.tool_calls && choice.message.tool_calls.length > 0;
+    
+    console.log('🤖 Has tool calls:', hasToolCalls);
+    if (choice.message.tool_calls) {
+      console.log('🤖 Tool calls:', JSON.stringify(choice.message.tool_calls, null, 2));
+    }
     
     if (hasToolCalls) {
       if (suggestionMode) {
@@ -1496,6 +1526,9 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
               break;
             case 'request_meeting_with_friend':
               toolResult = await executeRequestMeetingWithFriend(toolInput, req);
+              break;
+            case 'get_friends_list':
+              toolResult = await executeGetFriendsList(toolInput, req);
               break;
             default:
               toolResult = { success: false, error: 'Unknown tool' };
@@ -1666,6 +1699,12 @@ THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.star
     // Enhanced prompt with precise date awareness
     const smartPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
 
+⚠️ CRITICAL RULES:
+1. When user wants to "meet", "book a meeting", or "schedule" with a friend → ALWAYS output request_meeting_with_friend pattern
+2. When user wants a personal reminder/event → output CREATE_EVENT pattern  
+3. You CANNOT invite people directly - you MUST provide the action pattern so the user gets a button
+4. NEVER say you've "scheduled" or "invited" someone - say you'll provide a button to do so
+
 📅 CURRENT DATE & TIME CONTEXT:
 - TODAY is ${todayStr}
 - Current local time: ${tzInfo.localTimeStr} (${tzInfo.tzAbbr})
@@ -1684,9 +1723,17 @@ ${eventsContext}${conversationHistory}
 
 User: ${message}
 
-Respond naturally first, then if action needed, add on new line:
-CREATE_EVENT: {title: "Name", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}
-MOVE_EVENT: {eventTitle: "Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}`;
+When the user wants to schedule something, respond in this EXACT format:
+
+For meeting with friends:
+"I can schedule that meeting with [Friend] for you.
+request_meeting_with_friend: {friend: "[Name]", date: "YYYY-MM-DD", time: "HH:MM", title: "Meeting with [Name]", duration: 30}"
+
+For personal events:
+"I'll create that event for you.
+CREATE_EVENT: {title: "Event", date: "YYYY-MM-DD", time: "HH:MM", duration: 60}"
+
+You MUST include the action line - no exceptions!`;
 
     console.log('🤖 Making streamlined OpenAI request...');
     console.log('🔍 DEBUG: OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
@@ -1733,6 +1780,7 @@ MOVE_EVENT: {eventTitle: "Event", newDate: "YYYY-MM-DD", newTime: "HH:MM"}`;
     const cleanedResponse = aiResponse
       .replace(/CREATE_EVENT:\s*\{[^}]+\}/g, '')
       .replace(/MOVE_EVENT:\s*\{[^}]+\}/g, '')
+      .replace(/request_meeting_with_friend:\s*\{[^}]+\}/g, '')
       .replace(/\s+/g, ' ')
       .trim();
     
@@ -1766,7 +1814,12 @@ function classifyRequest(message) {
     /pattern of (meetings|events)/i,
     /busiest (day|week|month)/i,
     /overlap(ping)? (meetings|events)/i,
-    /recurring (meetings|events)/i
+    /recurring (meetings|events)/i,
+    // Meeting scheduling with other people
+    /(schedule|book|set up|arrange).*(meeting|meet).*(with|and)/i, // "schedule meeting with Stuart"
+    /(meet|meeting).*(with|and)/i, // "meeting with Stuart"
+    /request.*(meeting|meet)/i, // "request meeting"
+    /find.*(mutual|free).*time/i // "find mutual free time"
   ];
   
   // Simple queries that should use context
@@ -1795,43 +1848,122 @@ async function handleComplexRequest(message, currentEvents, userTimeZone, req, r
     // Define tools for complex analysis
     const complexTools = [
       {
-        name: "search_events",
-        description: "Search calendar events by title, participant, date range, or other criteria",
-        input_schema: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Search query" },
-            start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
-            end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
-            participant: { type: "string", description: "Person's name to search for" }
+        type: "function",
+        function: {
+          name: "search_events",
+          description: "Search calendar events by title, participant, date range, or other criteria",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search query" },
+              start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+              end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+              participant: { type: "string", description: "Person's name to search for" }
+            }
           }
         }
       },
       {
-        name: "analyze_schedule",
-        description: "Analyze calendar patterns, frequency, busy periods",
-        input_schema: {
-          type: "object", 
-          properties: {
-            analysis_type: { type: "string", enum: ["frequency", "busy_periods", "patterns", "conflicts"] },
-            date_range: { type: "string", description: "Date range to analyze" }
+        type: "function",
+        function: {
+          name: "analyze_schedule",
+          description: "Analyze calendar patterns, frequency, busy periods",
+          parameters: {
+            type: "object", 
+            properties: {
+              analysis_type: { type: "string", enum: ["frequency", "busy_periods", "patterns", "conflicts"] },
+              date_range: { type: "string", description: "Date range to analyze" }
+            }
           }
         }
       },
       {
-        name: "get_calendar_events",
-        description: "Get calendar events for a specific date range",
-        input_schema: {
-          type: "object",
-          properties: {
-            start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
-            end_date: { type: "string", description: "End date (YYYY-MM-DD)" }
+        type: "function",
+        function: {
+          name: "get_calendar_events",
+          description: "Get calendar events for a specific date range",
+          parameters: {
+            type: "object",
+            properties: {
+              start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+              end_date: { type: "string", description: "End date (YYYY-MM-DD)" }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_friends_list",
+          description: "Get the list of user's friends to check if someone is a friend before scheduling meetings",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "find_friends",
+          description: "Find and list available friends for scheduling meetings",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Optional search query to filter friends" }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "find_mutual_free_time",
+          description: "Find available time slots when both the user and a friend are free for a meeting",
+          parameters: {
+            type: "object",
+            properties: {
+              friend_name: { type: "string", description: "Name of the friend to find mutual time with" },
+              duration_minutes: { type: "integer", description: "Duration of the meeting in minutes (default: 30)" },
+              start_date: { type: "string", description: "Start of date range to search (YYYY-MM-DD)" },
+              end_date: { type: "string", description: "End of date range to search (YYYY-MM-DD)" }
+            },
+            required: ["friend_name", "start_date", "end_date"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "request_meeting_with_friend",
+          description: "Send a meeting request to a friend with proposed time slots",
+          parameters: {
+            type: "object",
+            properties: {
+              friend_name: { type: "string", description: "Name of the friend to request a meeting with" },
+              meeting_title: { type: "string", description: "Title for the meeting" },
+              message: { type: "string", description: "Optional message to include with the meeting request" },
+              duration_minutes: { type: "integer", description: "Duration of the meeting in minutes (default: 30)" },
+              proposed_times: {
+                type: "array",
+                description: "Array of proposed meeting times in ISO format (YYYY-MM-DDTHH:MM:SS)",
+                items: { type: "string" },
+                minItems: 1
+              }
+            },
+            required: ["friend_name", "meeting_title", "proposed_times"]
           }
         }
       }
     ];
 
     const complexPrompt = `You are Tilly, a calendar assistant with advanced analysis capabilities. Current time: ${new Date().toLocaleString()} (${userTimeZone}).
+
+⚠️ IMPORTANT TOOL USAGE:
+- Use 'request_meeting_with_friend' for ANY meeting involving another person/friend  
+- Use 'create_event' ONLY for personal calendar events (no other attendees)
+- Always check existing events before scheduling
 
 Recent events: ${currentEvents.map(e => `"${e.title}" on ${new Date(e.start).toLocaleDateString()}`).join(', ')}
 
@@ -1898,6 +2030,9 @@ Assistant:`;
               break;
             case 'get_calendar_events':
               result = await executeGetCalendarEvents(toolInput, req);
+              break;
+            case 'get_friends_list':
+              result = await executeGetFriendsList(toolInput, req);
               break;
             default:
               result = { success: false, error: `Unknown tool: ${toolName}` };
@@ -2008,6 +2143,29 @@ function parseActionSuggestions(aiResponse, userTimeZone) {
     }
   }
   
+  // Look for request_meeting_with_friend pattern
+  const meetingMatch = aiResponse.match(/request_meeting_with_friend:\s*\{([^}]+)\}/);
+  if (meetingMatch) {
+    try {
+      const meetingData = parseEventData(meetingMatch[1]);
+      if (meetingData.friend && meetingData.date) {
+        // Convert simplified format to proper tool format
+        const proposedTime = `${meetingData.date}T${meetingData.time || '15:00'}:00`;
+        suggestions.push({
+          type: 'request_meeting_with_friend',
+          friend_name: meetingData.friend,
+          meeting_title: meetingData.title || `Meeting with ${meetingData.friend}`,
+          message: meetingData.message || '',
+          duration_minutes: parseInt(meetingData.duration) || 30,
+          proposed_times: [proposedTime],
+          buttonText: `Request meeting with ${meetingData.friend}`
+        });
+      }
+    } catch (e) {
+      console.log('Failed to parse request_meeting_with_friend:', e.message);
+    }
+  }
+  
   return suggestions;
 }
 
@@ -2073,6 +2231,9 @@ app.post('/api/ai/execute-tools', authenticateUser, async (req, res) => {
             break;
           case 'request_meeting_with_friend':
             result = await executeRequestMeetingWithFriend(tool.input, req);
+            break;
+          case 'get_friends_list':
+            result = await executeGetFriendsList(tool.input, req);
             break;
           default:
             result = { success: false, error: `Unknown tool: ${tool.name}` };
@@ -2714,23 +2875,67 @@ async function executeFindMutualFreeTime(input, req) {
   }
 }
 
+async function executeGetFriendsList(input, req) {
+  try {
+    const friends = await getFriends(req.userId, req.supabase);
+    
+    return {
+      success: true,
+      friends: friends.map(f => ({
+        id: f.friend.id,
+        name: f.friend.display_name,
+        email: f.friend.email
+      })),
+      message: `Found ${friends.length} friend${friends.length === 1 ? '' : 's'}: ${friends.map(f => f.friend.display_name).join(', ')}`
+    };
+  } catch (error) {
+    console.error('Error in executeGetFriendsList:', error);
+    return { 
+      success: false,
+      error: 'Failed to get friends list',
+      details: error.message 
+    };
+  }
+}
+
 async function executeRequestMeetingWithFriend(input, req) {
   try {
     const { friend_name, meeting_title, message = '', duration_minutes = 30, proposed_times } = input;
     
-    console.log(`📤 Requesting meeting "${meeting_title}" with "${friend_name}"`);
+    console.log(`📤 DEBUGGING: executeRequestMeetingWithFriend called with:`, {
+      friend_name,
+      meeting_title,
+      duration_minutes,
+      proposed_times,
+      userId: req.userId
+    });
     
     // Find the friend by name
     const friends = await getFriends(req.userId, req.supabase);
+    console.log(`📤 DEBUGGING: Found ${friends.length} friends:`, friends.map(f => ({
+      id: f.friend.id,
+      name: f.friend.display_name,
+      email: f.friend.email
+    })));
+    
     const friend = friends.find(f => 
       f.friend.display_name.toLowerCase().includes(friend_name.toLowerCase()) ||
       f.friend.email.toLowerCase().includes(friend_name.toLowerCase())
     );
     
+    console.log(`📤 DEBUGGING: Matched friend:`, friend ? {
+      id: friend.friend.id,
+      name: friend.friend.display_name,
+      email: friend.friend.email
+    } : 'NOT FOUND');
+    
     if (!friend) {
+      const friendNames = friends.map(f => f.friend.display_name || f.friend.email).filter(Boolean);
       return {
         success: false,
-        error: `Friend "${friend_name}" not found. Make sure you're friends with this person first.`
+        error: `Friend "${friend_name}" not found. Make sure you're friends with this person first.`,
+        available_friends: friendNames,
+        suggestion: friendNames.length > 0 ? `Available friends: ${friendNames.join(', ')}` : 'You have no friends added yet. Add friends first before scheduling meetings.'
       };
     }
     
@@ -2766,13 +2971,23 @@ async function executeRequestMeetingWithFriend(input, req) {
       status: 'pending'
     };
     
+    console.log(`📤 DEBUGGING: About to create meeting request:`, {
+      requestData,
+      requesterUserId: req.userId,
+      friendId: friend.friend.id,
+      friendName: friend.friend.display_name,
+      proposedTimesCount: validatedTimes.length
+    });
+    
     const meetingRequest = await createMeetingRequest(requestData, req.supabase);
+    console.log(`📤 DEBUGGING: Created meeting request:`, meetingRequest);
     
     return {
       success: true,
       request: meetingRequest,
       friend_name: friend.friend.display_name,
-      message: `Meeting request "${meeting_title}" sent to ${friend.friend.display_name} with ${validatedTimes.length} proposed time${validatedTimes.length === 1 ? '' : 's'}.`
+      proposed_dates: validatedTimes.map(time => new Date(time).toLocaleDateString()),
+      message: `Meeting request "${meeting_title}" sent to ${friend.friend.display_name} with ${validatedTimes.length} proposed time${validatedTimes.length === 1 ? '' : 's'}. The proposed meetings will appear as outlined events on your friend's calendar.`
     };
   } catch (error) {
     console.error('Error in executeRequestMeetingWithFriend:', error);
@@ -4290,6 +4505,109 @@ app.post('/api/users/:id/block', authenticateUser, async (req, res) => {
 // MEETING REQUEST API ENDPOINTS
 // ============================================
 
+// Debug endpoint to check meeting requests table
+app.get('/api/debug/meeting-requests', authenticateUser, async (req, res) => {
+  try {
+    console.log('🔍 DEBUG: Checking meeting_requests table structure and data');
+    
+    // Check if table exists and get some sample data
+    const { data: allRequests, error: allError } = await req.supabase
+      .from('meeting_requests')
+      .select('*')
+      .limit(5);
+    
+    console.log('🔍 DEBUG: All meeting requests sample:', { allRequests, allError });
+    
+    // Check meeting requests for current user as recipient
+    const { data: userRequests, error: userError } = await req.supabase
+      .from('meeting_requests')
+      .select('*')
+      .eq('friend_id', req.userId);
+    
+    console.log('🔍 DEBUG: Meeting requests for current user:', { userRequests, userError });
+    
+    // Check user_profiles table
+    const { data: userProfiles, error: profileError } = await req.supabase
+      .from('user_profiles')
+      .select('id, display_name, email')
+      .limit(5);
+    
+    console.log('🔍 DEBUG: User profiles sample:', { userProfiles, profileError });
+    
+    // Check friends for current user
+    const friends = await getFriends(req.userId, req.supabase);
+    console.log('🔍 DEBUG: Current user friends:', friends);
+    
+    // Test the getAllEvents function
+    try {
+      const events = await getAllEvents(req.userId, req.supabase);
+      console.log('🔍 DEBUG: getAllEvents result:', {
+        totalEvents: events.length,
+        meetingRequestEvents: events.filter(e => e.type === 'meeting_request').length,
+        regularEvents: events.filter(e => e.type === 'event').length
+      });
+    } catch (eventsError) {
+      console.log('🔍 DEBUG: getAllEvents error:', eventsError);
+    }
+    
+    res.json({
+      userId: req.userId,
+      allMeetingRequests: allRequests,
+      userMeetingRequests: userRequests,
+      userProfiles,
+      friends,
+      errors: { allError, userError, profileError }
+    });
+  } catch (error) {
+    console.error('🔍 DEBUG: Error in debug endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test endpoint to manually create a meeting request for debugging
+app.post('/api/debug/create-test-meeting-request', authenticateUser, async (req, res) => {
+  try {
+    console.log('🔍 DEBUG: Creating test meeting request');
+    
+    // Get user's friends
+    const friends = await getFriends(req.userId, req.supabase);
+    if (friends.length === 0) {
+      return res.status(400).json({ error: 'No friends found. Add a friend first.' });
+    }
+    
+    const firstFriend = friends[0];
+    console.log('🔍 DEBUG: Using first friend:', firstFriend.friend);
+    
+    // Create a test meeting request
+    const testRequest = {
+      requester_id: req.userId,
+      friend_id: firstFriend.friend.id,
+      title: 'Test Meeting Request',
+      message: 'This is a test meeting request created via debug endpoint',
+      duration_minutes: 30,
+      proposed_times: [
+        new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
+        new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()  // Day after tomorrow
+      ],
+      status: 'pending'
+    };
+    
+    console.log('🔍 DEBUG: Test request data:', testRequest);
+    
+    const result = await createMeetingRequest(testRequest, req.supabase);
+    console.log('🔍 DEBUG: Created meeting request:', result);
+    
+    res.json({ 
+      success: true, 
+      testRequest: result,
+      friendUsed: firstFriend.friend
+    });
+  } catch (error) {
+    console.error('🔍 DEBUG: Error creating test meeting request:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Create meeting request
 app.post('/api/meetings/request', authenticateUser, async (req, res) => {
   try {
@@ -4335,6 +4653,85 @@ app.get('/api/meetings/requests', authenticateUser, async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching meeting requests:', error);
     res.status(500).json({ error: 'Failed to fetch meeting requests' });
+  }
+});
+
+// Accept meeting request
+app.post('/api/meetings/requests/:id/accept', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    const { selected_time } = req.body;
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+    
+    if (!selected_time) {
+      return res.status(400).json({ error: 'selected_time is required when accepting' });
+    }
+
+    const result = await respondToMeetingRequest(
+      requestId, 
+      'accepted', 
+      selected_time, 
+      req.userId, 
+      req.supabase
+    );
+
+    // Create calendar event for the accepting user
+    const eventStart = new Date(selected_time);
+    const eventEnd = new Date(eventStart.getTime() + (result.duration_minutes * 60000));
+    
+    try {
+      const friendEvent = await createEvent({
+        title: result.title,
+        start: eventStart,
+        end: eventEnd,
+        color: '#4A7C2A'
+      }, req.userId, req.supabase);
+
+      res.json({ 
+        success: true, 
+        message: 'Meeting accepted and added to your calendar!',
+        request: result,
+        event: friendEvent
+      });
+    } catch (error) {
+      console.error('❌ Error creating calendar events:', error);
+      res.json({ 
+        success: true, 
+        request: result,
+        warning: 'Meeting accepted but there was an issue creating calendar events',
+        error: error.message
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error accepting meeting request:', error);
+    res.status(500).json({ error: 'Failed to accept meeting request' });
+  }
+});
+
+// Decline meeting request
+app.post('/api/meetings/requests/:id/decline', authenticateUser, async (req, res) => {
+  try {
+    const requestId = parseInt(req.params.id);
+    
+    if (isNaN(requestId)) {
+      return res.status(400).json({ error: 'Invalid request ID' });
+    }
+
+    const result = await respondToMeetingRequest(
+      requestId, 
+      'declined', 
+      null, 
+      req.userId, 
+      req.supabase
+    );
+
+    res.json({ success: true, request: result });
+  } catch (error) {
+    console.error('❌ Error declining meeting request:', error);
+    res.status(500).json({ error: 'Failed to decline meeting request' });
   }
 });
 

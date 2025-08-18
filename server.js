@@ -3543,11 +3543,12 @@ app.post('/api/calendar-subscriptions/sync-all', authenticateUser, async (req, r
   }
 });
 
-// Start automatic sync interval (every 30 minutes)
+// Start automatic sync interval (every 2 hours - cost optimized)
 let syncInterval;
 const startAutoSync = () => {
   if (syncInterval) clearInterval(syncInterval);
   
+  // COST OPTIMIZATION: Reduced sync frequency from 30min to 2hrs to reduce CPU/bandwidth costs
   syncInterval = setInterval(async () => {
     try {
       console.log('🔄 Auto-sync starting...');
@@ -3643,9 +3644,9 @@ const startAutoSync = () => {
     } catch (error) {
       console.error('❌ Auto-sync master error:', error.message);
     }
-  }, 30 * 60 * 1000); // 30 minutes
+  }, 2 * 60 * 60 * 1000); // 2 hours (reduced from 30min to save costs)
   
-  console.log('🕐 Auto-sync enabled (every 30 minutes)');
+  console.log('🕐 Auto-sync enabled (every 2 hours - optimized for cost)');
 };
 
 // Start auto-sync after server initialization

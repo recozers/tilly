@@ -40,17 +40,17 @@ Should return: `{"status":"OK","message":"Proxy server is running"}`
 
 ### 3. Environment Variables Check
 In logs, look for warnings like:
-- `⚠️ Missing environment variables: SUPABASE_URL`
-- `⚠️ Missing ANTHROPIC_API_KEY - AI features will not work`
+- `Missing environment variables: SUPABASE_URL`
+- `Missing ANTHROPIC_API_KEY - AI features will not work`
 
 ## Expected Startup Messages
 ```
-🚀 Tilly Calendar server running on port 8080
-📊 Environment: production
-🔗 API endpoint: http://localhost:8080/api/claude
-📅 Events API: http://localhost:8080/api/events
-❤️ Health check: http://localhost:8080/health
-🌐 Serving static files from dist/
+Tilly Calendar server running on port 8080
+Environment: production
+API endpoint: http://localhost:8080/api/claude
+Events API: http://localhost:8080/api/events
+Health check: http://localhost:8080/health
+Serving static files from dist/
 ```
 
 ## Quick Fixes

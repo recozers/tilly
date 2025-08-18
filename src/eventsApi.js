@@ -96,7 +96,8 @@ export const createEvent = async (eventData) => {
 // Update an existing event
 export const updateEvent = async (id, eventData) => {
   try {
-    console.log('🔍 DEBUG: updateEvent called with:', { id, eventData });
+    const IS_DEBUG = !!import.meta.env?.VITE_DEBUG;
+    if (IS_DEBUG) console.log('DEBUG: updateEvent called with:', { id, eventData });
     
     // Build the update payload, only including fields that are provided
     const updatePayload = {};
@@ -109,14 +110,14 @@ export const updateEvent = async (id, eventData) => {
       updatePayload.start = eventData.start instanceof Date 
         ? eventData.start.getTime() 
         : eventData.start;
-      console.log('🔍 DEBUG: processed start:', updatePayload.start, 'from:', eventData.start);
+      if (IS_DEBUG) console.log('DEBUG: processed start:', updatePayload.start, 'from:', eventData.start);
     }
     
     if (eventData.end !== undefined) {
       updatePayload.end = eventData.end instanceof Date 
         ? eventData.end.getTime() 
         : eventData.end;
-      console.log('🔍 DEBUG: processed end:', updatePayload.end, 'from:', eventData.end);
+      if (IS_DEBUG) console.log('DEBUG: processed end:', updatePayload.end, 'from:', eventData.end);
     }
     
     if (eventData.color !== undefined) {
@@ -125,7 +126,7 @@ export const updateEvent = async (id, eventData) => {
 
     updatePayload.userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-    console.log('🔍 DEBUG: final updatePayload:', updatePayload);
+    if (IS_DEBUG) console.log('DEBUG: final updatePayload:', updatePayload);
 
     const headers = await getAuthHeaders()
     const response = await fetch(`${API_BASE_URL}/events/${id}`, {

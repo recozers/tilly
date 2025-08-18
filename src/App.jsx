@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import * as eventsApi from './eventsApi.js'
 import { useAuth } from './contexts/AuthContext'
 import { supabase } from './lib/supabase'
@@ -222,14 +222,23 @@ const App = () => {
     })
   }
 
-  // Get the actual height of a time slot from the DOM
-  const getActualSlotHeight = () => {
-    const firstSlot = document.querySelector('.calendar-time-grid > div')
-    if (firstSlot) {
-      return firstSlot.getBoundingClientRect().height
+  // Cache measured slot height to avoid repeated DOM reads
+  const slotHeightRef = useRef(61)
+  useEffect(() => {
+    const measure = () => {
+      const firstSlot = document.querySelector('.calendar-time-grid > div')
+      if (firstSlot) {
+        const h = firstSlot.getBoundingClientRect().height
+        if (h && Number.isFinite(h)) slotHeightRef.current = h
+      }
     }
-    return 61 // fallback
-  }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
+  // Get the actual height of a time slot from the DOM (cached)
+  const getActualSlotHeight = () => slotHeightRef.current
 
   // Calculate overlapping events for a specific date
   const getOverlappingEvents = (targetEvent, allEvents, date) => {
@@ -431,7 +440,7 @@ const App = () => {
     setPendingEventData({
       type: 'event_suggestion',
       eventData: {
-        title: 'New Event',
+        title: '',
         start: startTime.toISOString(),
         end: endTime.toISOString()
       },
@@ -506,7 +515,7 @@ const App = () => {
         // Add success message
         const successMessage = {
           id: Date.now().toString(),
-          text: `✅ Created "${suggestion.title}" for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          text: `Created "${suggestion.title}" for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           sender: 'bot',
           timestamp: new Date(),
           isSuccess: true
@@ -533,7 +542,7 @@ const App = () => {
           
           const successMessage = {
             id: Date.now().toString(),
-            text: `✅ Moved "${existingEvent.title}" to ${newStart.toLocaleDateString()} at ${newStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            text: `Moved "${existingEvent.title}" to ${newStart.toLocaleDateString()} at ${newStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
             sender: 'bot',
             timestamp: new Date(),
             isSuccess: true
@@ -543,8 +552,36 @@ const App = () => {
           throw new Error(`Could not find event "${suggestion.eventTitle}"`);
         }
       } else if (suggestion.type === 'request_meeting_with_friend') {
-        // Send meeting request to friend
+        // Send meeting request to friend (guard against non-friends)
         const { data: { session } } = await supabase.auth.getSession()
+
+        // Client-side guard: ensure the person is a friend before attempting request
+        try {
+          const friendsRes = await fetch('/api/friends', {
+            headers: { 'Authorization': `Bearer ${session?.access_token}` }
+          })
+          if (friendsRes.ok) {
+            const friends = await friendsRes.json()
+            const target = (suggestion.friend_name || '').toLowerCase()
+            const isFriend = friends.some(f =>
+              (f?.friend?.display_name || '').toLowerCase().includes(target) ||
+              (f?.friend?.email || '').toLowerCase().includes(target)
+            )
+            if (!isFriend) {
+              const infoMessage = {
+                id: Date.now().toString(),
+                text: `${suggestion.friend_name} isn’t in your friends list. Add them as a friend before sending a meeting request.`,
+                sender: 'bot',
+                timestamp: new Date(),
+                isError: false
+              }
+              setMessages(prev => [...prev, infoMessage])
+              return
+            }
+          }
+        } catch (ignore) {
+          // If friends check fails, proceed to server which enforces the rule anyway
+        }
         
         const response = await fetch('/api/ai/execute-tools', {
           method: 'POST',
@@ -574,7 +611,7 @@ const App = () => {
           if (toolResult.success) {
             const successMessage = {
               id: Date.now().toString(),
-              text: `✅ Meeting request sent to ${suggestion.friend_name}!`,
+              text: `Meeting request sent to ${suggestion.friend_name}.`,
               sender: 'bot',
               timestamp: new Date(),
               isSuccess: true
@@ -593,7 +630,7 @@ const App = () => {
       console.error('Error executing smart action:', error);
       const errorMessage = {
         id: Date.now().toString(),
-        text: `❌ Failed to ${suggestion.type.replace('_', ' ')}: ${error.message}`,
+        text: `Failed to ${suggestion.type.replace('_', ' ')}: ${error.message}`,
         sender: 'bot',
         timestamp: new Date(),
         isError: true
@@ -616,10 +653,10 @@ const App = () => {
 
   // Update event (for drag and drop, resize, and title editing)
   const updateEventInDatabase = async (eventId, updatedData) => {
-    console.log(`🔍 DEBUG: updateEventInDatabase called with ID ${eventId}`, updatedData)
+    console.log(`DEBUG: updateEventInDatabase called with ID ${eventId}`, updatedData)
     try {
       const updatedEvent = await eventsApi.updateEvent(eventId, updatedData)
-      console.log(`🔍 DEBUG: API returned updated event:`, updatedEvent)
+      console.log(`DEBUG: API returned updated event:`, updatedEvent)
       // Don't update state here - let the caller handle it to avoid conflicts
       return updatedEvent
     } catch (error) {
@@ -1004,7 +1041,7 @@ const App = () => {
       }
 
       const result = await response.json()
-      console.log('✅ Meeting acceptance result:', result)
+      console.log('Meeting acceptance result:', result)
       
       // Show success message
       setSuccessMessage('Meeting accepted!')
@@ -1018,7 +1055,7 @@ const App = () => {
       const startDate = meetingEvent.start instanceof Date ? meetingEvent.start : new Date(meetingEvent.start)
       const systemMessage = {
         id: Date.now().toString(),
-        text: `✅ Meeting "${meetingEvent.title.replace(' (proposed by ', ' with ').replace(')', '')}" accepted for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        text: `Meeting "${meetingEvent.title.replace(' (proposed by ', ' with ').replace(')', '')}" accepted for ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
         sender: 'bot',
         timestamp: new Date(),
         isSuccess: true
@@ -1060,7 +1097,7 @@ const App = () => {
       if (meetingEvent) {
         addMessage({
           id: Date.now().toString(),
-          content: `❌ Meeting request "${meetingEvent.title.replace(' (proposed by ', ' from ').replace(')', '')}" declined`,
+          content: `Meeting request "${meetingEvent.title.replace(' (proposed by ', ' from ').replace(')', '')}" declined`,
           type: 'system',
           timestamp: new Date()
         })
@@ -1208,8 +1245,8 @@ const App = () => {
     }
   }
 
-  const timeSlots = generateTimeSlots()
-  const weekDates = getWeekDates()
+  const timeSlots = useMemo(() => generateTimeSlots(), [])
+  const weekDates = useMemo(() => getWeekDates(currentDate), [currentDate])
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
   // Add calendar subscription management
@@ -1377,13 +1414,13 @@ const App = () => {
                 {showDropdown && (
                   <div className="import-dropdown-menu">
                     <button onClick={() => { setShowImportModal(true); setImportMethod('file'); setShowDropdown(false); }}>
-                      📁 Upload .ics File
+                      Upload .ics File
                     </button>
                     <button onClick={() => { setShowImportModal(true); setImportMethod('url'); setShowDropdown(false); }}>
-                      🔗 From URL
+                      From URL
                     </button>
                     <button onClick={() => { setShowSubscriptions(true); setShowDropdown(false); }}>
-                      🔄 Manage Subscriptions
+                      Manage Subscriptions
                     </button>
                   </div>
                 )}
@@ -1407,7 +1444,7 @@ const App = () => {
             <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
               <div className="modal-content" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                  <h3>📁 Import Calendar</h3>
+                  <h3>Import Calendar</h3>
                   <button className="close-btn" onClick={() => setShowImportModal(false)}>×</button>
                 </div>
                 
@@ -1417,13 +1454,13 @@ const App = () => {
                       className={`tab-btn ${importMethod === 'file' ? 'active' : ''}`}
                       onClick={() => setImportMethod('file')}
                     >
-                      📄 Upload File
+                      Upload File
                     </button>
                     <button 
                       className={`tab-btn ${importMethod === 'url' ? 'active' : ''}`}
                       onClick={() => setImportMethod('url')}
                     >
-                      🔗 From URL
+                      From URL
                     </button>
                   </div>
 
@@ -1437,14 +1474,14 @@ const App = () => {
                           onChange={handleFileSelect}
                           style={{ display: 'none' }}
                         />
-                        <div className="upload-icon">📁</div>
+                      <div className="upload-icon"></div>
                         <p>Click to select .ics file</p>
                         <small>Maximum file size: 5MB</small>
                       </div>
 
                       {selectedFile && (
                         <div className="selected-file">
-                          <span>📄 {selectedFile.name}</span>
+                          <span>{selectedFile.name}</span>
                           <button onClick={() => setSelectedFile(null)}>Remove</button>
                         </div>
                       )}
@@ -1462,7 +1499,7 @@ const App = () => {
                   {importMethod === 'url' && (
                     <div className="import-section">
                       <div className="url-import-help">
-                        <h4>📋 Getting Your Calendar URL:</h4>
+                        <h4>Getting Your Calendar URL:</h4>
                         <div className="help-section">
                           <strong>iCloud Calendar:</strong>
                           <ol>
@@ -1497,7 +1534,7 @@ const App = () => {
                             checked={subscribeToCalendar}
                             onChange={(e) => setSubscribeToCalendar(e.target.checked)}
                           />
-                          <span className="subscription-icon">🔄</span>
+                        <span className="subscription-icon"></span>
                           <strong>Subscribe for automatic updates</strong>
                           <small>Keep this calendar synced with new events (checks every 30 minutes)</small>
                         </label>
@@ -1525,13 +1562,13 @@ const App = () => {
 
                   {errorMessage && (
                     <div className="error-message">
-                      ❌ {errorMessage}
+                      {errorMessage}
                     </div>
                   )}
 
                   {successMessage && (
                     <div className="success-message">
-                      ✅ {successMessage}
+                      {successMessage}
                     </div>
                   )}
                 </div>
@@ -1632,7 +1669,7 @@ const App = () => {
                     disabled={isSendingInvites || inviteEmails.every(email => !email.trim())}
                     className="import-url-btn"
                   >
-                    {isSendingInvites ? '⏳ Sending...' : '📤 Send Invitations'}
+                    {isSendingInvites ? 'Sending...' : 'Send Invitations'}
                   </button>
                   <button
                     onClick={() => {
@@ -1659,10 +1696,10 @@ const App = () => {
 
           {importResult && (
             <div className="success-message">
-              ✅ {importResult.message}
+              {importResult.message}
               {importResult.failed > 0 && (
                 <div className="import-warnings">
-                  ⚠️ {importResult.failed} events failed to import
+                  {importResult.failed} events failed to import
                 </div>
               )}
               <button 
@@ -1756,7 +1793,6 @@ const App = () => {
 
                     {/* Day Columns */}
                     {weekDates.map((date, dayIndex) => {
-                      const dayEvents = getEventsForDateTime(date, slot.time)
                       const isToday = date.toDateString() === new Date().toDateString()
                       
                       return (
@@ -1772,7 +1808,7 @@ const App = () => {
                             padding: '2px'
                           }}
                           onMouseEnter={(e) => {
-                            if (dayEvents.length === 0 && !dragState) {
+                            if (!dragState) {
                               e.target.style.backgroundColor = isToday ? '#e0f2fe' : '#f3f4f6'
                             }
                           }}
@@ -2129,7 +2165,7 @@ const App = () => {
                                         }}
                                         title="Accept meeting request"
                                       >
-                                        ✓
+                                        OK
                                       </div>
                                       {/* Decline button */}
                                       <div
@@ -2165,7 +2201,7 @@ const App = () => {
                                         }}
                                         title="Decline meeting request"
                                       >
-                                        ×
+                                        X
                                       </div>
                                     </>
                                   ) : (
@@ -2200,7 +2236,7 @@ const App = () => {
                                             e.target.style.opacity = '0'
                                           }}
                                         >
-                                          ✉️
+                                          
                                         </div>
                                       )}
                                       
@@ -2369,11 +2405,9 @@ const App = () => {
                     }}>
                       {message.suggestions.map((suggestion, index) => {
                         // Determine if this is a friend-related action
-                        const isFriendAction = suggestion.buttonText?.toLowerCase().includes('friend') || 
-                                             suggestion.buttonText?.toLowerCase().includes('meeting') ||
-                                             suggestion.buttonText?.toLowerCase().includes('invite') ||
-                                             suggestion.type === 'friend_meeting' ||
-                                             suggestion.type === 'request_meeting_with_friend';
+                        // Only treat explicit friend meeting requests as special (purple)
+                        const isFriendAction = suggestion.type === 'request_meeting_with_friend' ||
+                                             suggestion.type === 'friend_meeting';
                         
                         return (
                           <button
@@ -2420,7 +2454,7 @@ const App = () => {
                               <span style={{ 
                                 marginRight: '6px',
                                 fontSize: '12px'
-                              }}>👥</span>
+                              }}></span>
                             )}
                             {suggestion.buttonText}
                             {isFriendAction && (
@@ -2528,7 +2562,7 @@ const App = () => {
         <div className="modal-overlay" onClick={() => setShowSubscriptions(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>🔄 Calendar Subscriptions</h3>
+            <h3>Calendar Subscriptions</h3>
               <button className="close-btn" onClick={() => setShowSubscriptions(false)}>×</button>
             </div>
             
@@ -2536,7 +2570,7 @@ const App = () => {
               {calendarSubscriptions.length === 0 ? (
                 <div className="no-subscriptions">
                   <p>No calendar subscriptions yet.</p>
-                  <p>Use "🔗 From URL" with the subscribe option to add automatic calendar syncing.</p>
+                  <p>Use "From URL" with the subscribe option to add automatic calendar syncing.</p>
                 </div>
               ) : (
                 <div className="subscriptions-list">
@@ -2557,13 +2591,13 @@ const App = () => {
                           className="sync-btn"
                           onClick={() => syncCalendarSubscription(subscription.id)}
                         >
-                          🔄 Sync Now
+                          Sync Now
                         </button>
                         <button 
                           className="delete-btn"
                           onClick={() => deleteCalendarSubscription(subscription.id)}
                         >
-                          🗑️ Delete
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -2573,13 +2607,13 @@ const App = () => {
 
               {errorMessage && (
                 <div className="error-message">
-                  ❌ {errorMessage}
+                  {errorMessage}
                 </div>
               )}
 
               {successMessage && (
                 <div className="success-message">
-                  ✅ {successMessage}
+                  {successMessage}
                 </div>
               )}
             </div>
@@ -2615,4 +2649,3 @@ const AppWithAuth = () => {
 }
 
 export default AppWithAuth
-

@@ -1,8 +1,10 @@
 // OpenAI API integration for calendar event parsing
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
+const CLIENT_OPENAI_MODEL = import.meta.env?.VITE_OPENAI_MODEL || 'gpt-5';
 
-// Debug logging (safe - no sensitive data)
-console.log('API Key loaded:', OPENAI_API_KEY ? 'Yes (length: ' + OPENAI_API_KEY.length + ')' : 'No');
+// Debug logging (guarded)
+const IS_DEBUG = !!import.meta.env?.VITE_DEBUG;
+if (IS_DEBUG) console.log('API Key loaded:', OPENAI_API_KEY ? 'Yes' : 'No');
 
 const SYSTEM_PROMPT = `You are Tilly, a helpful calendar assistant. Your job is to parse natural language requests and extract calendar event information.
 
@@ -45,8 +47,10 @@ Rules:
 Current date and time: ${new Date().toISOString()}`;
 
 export const parseEventRequest = async (userMessage) => {
-  console.log('parseEventRequest called with:', userMessage);
-  console.log('API Key available:', !!OPENAI_API_KEY);
+  if (IS_DEBUG) {
+    console.log('parseEventRequest called with:', userMessage);
+    console.log('API Key available:', !!OPENAI_API_KEY);
+  }
   
   // Use dynamic URL that works in both dev and production
   const envBase = import.meta.env?.VITE_API_BASE;
@@ -54,10 +58,10 @@ export const parseEventRequest = async (userMessage) => {
   const PROXY_URL = `${API_BASE}/api/openai`;
   
   try {
-    console.log('Making API request via proxy server...');
+    if (IS_DEBUG) console.log('Making API request via proxy server...');
     
     const requestBody = {
-      model: 'gpt-4o-mini',
+      model: CLIENT_OPENAI_MODEL,
       messages: [
         {
           role: 'system',
@@ -73,7 +77,7 @@ export const parseEventRequest = async (userMessage) => {
       response_format: { type: "json_object" }
     };
     
-    console.log('Request body:', requestBody);
+    if (IS_DEBUG) console.log('Request body:', requestBody);
     
     const response = await fetch(PROXY_URL, {
       method: 'POST',
@@ -83,22 +87,22 @@ export const parseEventRequest = async (userMessage) => {
       body: JSON.stringify(requestBody)
     });
 
-    console.log('Proxy response status:', response.status);
+    if (IS_DEBUG) console.log('Proxy response status:', response.status);
     
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('Proxy request failed:', response.status, errorData);
+      if (IS_DEBUG) console.error('Proxy request failed:', response.status, errorData);
       throw new Error(`Proxy request failed: ${response.status} - ${errorData.error}`);
     }
 
     const data = await response.json();
-    console.log('API response data:', data);
+    if (IS_DEBUG) console.log('API response data:', data);
     const content = data.choices[0].message.content;
     
     // Parse the JSON response from OpenAI
     try {
       const parsedResponse = JSON.parse(content);
-      console.log('Parsed response:', parsedResponse);
+      if (IS_DEBUG) console.log('Parsed response:', parsedResponse);
       
       // Validate the response structure
       if (parsedResponse.intent === 'create_event' && parsedResponse.event) {
@@ -109,7 +113,7 @@ export const parseEventRequest = async (userMessage) => {
       
       return parsedResponse;
     } catch (parseError) {
-      console.error('Failed to parse OpenAI response as JSON:', content);
+      if (IS_DEBUG) console.error('Failed to parse OpenAI response as JSON:', content);
       return {
         intent: 'general',
         response: content // Return the raw response if it's not valid JSON
@@ -117,13 +121,15 @@ export const parseEventRequest = async (userMessage) => {
     }
 
   } catch (error) {
-    console.error('Error calling proxy API:', error);
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
+    if (IS_DEBUG) {
+      console.error('Error calling proxy API:', error);
+      console.error('Error type:', error.constructor.name);
+      console.error('Error message:', error.message);
+    }
     
     // Check if it's a network error (proxy server not running)
     if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
-      console.error('Proxy server appears to be down. Make sure to run: npm run server');
+      if (IS_DEBUG) console.error('Proxy server appears to be down. Make sure to run: npm run server');
       return {
         intent: 'general',
         response: "The AI service is currently unavailable. Please make sure the proxy server is running (npm run server) and try again."
@@ -131,7 +137,7 @@ export const parseEventRequest = async (userMessage) => {
     }
     
     // Fall back to enhanced parser if proxy fails
-    console.log('Falling back to enhanced local parser...');
+    if (IS_DEBUG) console.log('Falling back to enhanced local parser...');
     return getEnhancedFallbackResponse(userMessage);
   }
 };

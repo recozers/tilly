@@ -8,18 +8,18 @@ const supabase = createClient(
 )
 
 async function populateUserProfiles() {
-  console.log('🔄 Starting user profile population...')
+  console.log('Starting user profile population...')
   
   try {
     // Get all users from auth.users
     const { data: users, error: usersError } = await supabase.auth.admin.listUsers()
     
     if (usersError) {
-      console.error('❌ Error fetching users:', usersError)
+      console.error('Error fetching users:', usersError)
       return
     }
 
-    console.log(`📊 Found ${users.users.length} users in auth.users`)
+    console.log(`Found ${users.users.length} users in auth.users`)
 
     // Get existing profiles
     const { data: existingProfiles, error: profilesError } = await supabase
@@ -27,16 +27,16 @@ async function populateUserProfiles() {
       .select('*')
     
     if (profilesError) {
-      console.error('❌ Error fetching existing profiles:', profilesError)
+      console.error('Error fetching existing profiles:', profilesError)
       return
     }
 
     const existingProfileIds = new Set(existingProfiles.map(p => p.id))
-    console.log(`📊 Found ${existingProfiles.length} existing profiles`)
+    console.log(`Found ${existingProfiles.length} existing profiles`)
 
     // Find users without profiles
     const usersWithoutProfiles = users.users.filter(user => !existingProfileIds.has(user.id))
-    console.log(`📊 Found ${usersWithoutProfiles.length} users without profiles`)
+    console.log(`Found ${usersWithoutProfiles.length} users without profiles`)
 
     // Check existing profiles for missing/empty display names or email-based names
     const profilesToUpdate = existingProfiles.filter(profile => 
@@ -45,7 +45,7 @@ async function populateUserProfiles() {
       profile.display_name === 'User' ||
       profile.display_name === profile.email // Also fix email-based display names
     )
-    console.log(`📊 Found ${profilesToUpdate.length} profiles with missing/generic names`)
+    console.log(`Found ${profilesToUpdate.length} profiles with missing/generic names`)
 
     // Create profiles for users without them
     const profilesToCreate = usersWithoutProfiles.map(user => {
@@ -65,7 +65,7 @@ async function populateUserProfiles() {
     })
 
     if (profilesToCreate.length > 0) {
-      console.log('📝 Creating profiles for users:')
+      console.log('Creating profiles for users:')
       profilesToCreate.forEach(profile => {
         console.log(`  - ${profile.display_name} (${profile.email})`)
       })
@@ -82,18 +82,18 @@ async function populateUserProfiles() {
           .insert(batch)
         
         if (insertError) {
-          console.error(`❌ Error inserting batch ${i / batchSize + 1}:`, insertError)
+          console.error(`Error inserting batch ${i / batchSize + 1}:`, insertError)
           continue
         }
         
         created += batch.length
-        console.log(`✅ Created ${batch.length} profiles (${created}/${profilesToCreate.length})`)
+        console.log(`Created ${batch.length} profiles (${created}/${profilesToCreate.length})`)
       }
     }
 
     // Update existing profiles with missing names
     if (profilesToUpdate.length > 0) {
-      console.log('\n📝 Updating profiles with missing names:')
+      console.log('\nUpdating profiles with missing names:')
       let updated = 0
       
       for (const profile of profilesToUpdate) {
@@ -112,7 +112,7 @@ async function populateUserProfiles() {
           .eq('id', profile.id)
         
         if (updateError) {
-          console.error(`❌ Error updating profile for ${profile.email}:`, updateError)
+          console.error(`Error updating profile for ${profile.email}:`, updateError)
           continue
         }
         
@@ -120,10 +120,10 @@ async function populateUserProfiles() {
         updated++
       }
       
-      console.log(`✅ Updated ${updated} existing profiles`)
+      console.log(`Updated ${updated} existing profiles`)
     }
 
-    console.log(`🎉 Processing complete!`)
+    console.log(`Processing complete!`)
     
     // Verify the results
     const { data: finalProfiles, error: finalError } = await supabase
@@ -132,18 +132,18 @@ async function populateUserProfiles() {
       .order('created_at', { ascending: false })
     
     if (finalError) {
-      console.error('❌ Error verifying results:', finalError)
+      console.error('Error verifying results:', finalError)
       return
     }
     
-    console.log(`\n📊 Final count: ${finalProfiles.length} total profiles`)
-    console.log('📋 All profiles:')
+    console.log(`\nFinal count: ${finalProfiles.length} total profiles`)
+    console.log('All profiles:')
     finalProfiles.forEach(profile => {
       console.log(`  - ${profile.display_name} (${profile.email})`)
     })
     
   } catch (error) {
-    console.error('❌ Script failed:', error)
+    console.error('Script failed:', error)
   }
 }
 
@@ -180,11 +180,11 @@ function extractDisplayName(user) {
 if (require.main === module) {
   populateUserProfiles()
     .then(() => {
-      console.log('✅ Script completed')
+      console.log('Script completed')
       process.exit(0)
     })
     .catch(error => {
-      console.error('❌ Script failed:', error)
+      console.error('Script failed:', error)
       process.exit(1)
     })
 }

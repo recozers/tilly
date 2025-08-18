@@ -53,6 +53,11 @@ const {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Centralized OpenAI model selection
+// Default to GPT-5 with env override and graceful fallback via API error handling
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+const DEBUG = process.env.DEBUG === 'true';
+
 // Simple in-memory cache for AI responses
 const responseCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -449,7 +454,7 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
     const { model, messages, temperature, max_tokens, response_format } = req.body;
 
     const requestBody = {
-      model: model || 'gpt-4o-mini',
+      model: model || OPENAI_MODEL,
       messages: messages,
       temperature: temperature || 0.3,
       max_tokens: max_tokens || 1000
@@ -528,8 +533,8 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
     
     // Use OpenAI API for intelligent calendar assistance
     const requestBody = {
-      model: 'gpt-4o-mini',
-      max_tokens: 1000,
+      model: OPENAI_MODEL,
+      max_tokens: 600,
       stream: true,
       messages: [{
         role: 'system',
@@ -1430,8 +1435,8 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
     });
 
     const openaiRequest = {
-      model: 'gpt-4o-mini',
-      max_tokens: 1000,
+      model: OPENAI_MODEL,
+      max_tokens: 600,
       messages: messages,
       tools: tools,
       tool_choice: 'auto',
@@ -1448,7 +1453,7 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify(openaiRequest)
+      body: JSON.stringify({ ...openaiRequest, model: OPENAI_MODEL })
     });
 
     if (!response.ok) {
@@ -1567,8 +1572,8 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
       console.log('🔄 Sending tool results back to OpenAI...');
       
       const followUpRequest = {
-        model: 'gpt-4o-mini',
-        max_tokens: 1000,
+        model: OPENAI_MODEL,
+        max_tokens: 600,
         messages: conversationMessages,
         temperature: 0.3
       };
@@ -1579,7 +1584,7 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
-        body: JSON.stringify(followUpRequest)
+        body: JSON.stringify({ ...followUpRequest, model: OPENAI_MODEL })
       });
       
       if (!followUpResponse.ok) {
@@ -1649,7 +1654,7 @@ app.post('/api/ai/smart-chat', authenticateUser, async (req, res) => {
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
     
-    console.log(`📅 Fetching events for current week: ${startOfWeek.toISOString().split('T')[0]} to ${endOfWeek.toISOString().split('T')[0]}`);
+    if (DEBUG) console.log(`Fetching events for current week: ${startOfWeek.toISOString().split('T')[0]} to ${endOfWeek.toISOString().split('T')[0]}`);
     
     const weekEvents = await getEventsByDateRange(startOfWeek, endOfWeek, req.userId, req.supabase);
     
@@ -1679,7 +1684,7 @@ THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.star
     
     // First, classify the request complexity
     const requestType = classifyRequest(message);
-    console.log(`🔍 Message: "${message}" classified as: ${requestType}`);
+    if (DEBUG) console.log(`Message: "${message}" classified as: ${requestType}`);
     
     if (requestType === 'complex') {
       // Use tool-based approach for complex queries
@@ -1690,53 +1695,70 @@ THIS WEEK: ${weekEvents.slice(0, 10).map(e => `"${e.title}" on ${new Date(e.star
     const conversationHistory = chatHistory.length > 0 
       ? `\nRecent conversation:\n${chatHistory.slice(-3).map(msg => `${msg.sender}: ${msg.text}`).join('\n')}\n`
       : '';
-    
+
     // Get enhanced date/time context
     const tzInfo = getUserTimezoneInfo(userTimeZone);
     const currentDate = new Date();
     const tomorrowStr = new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0];
+
+    // Load friends to constrain meeting requests to valid recipients
+    let friendsList = [];
+    try {
+      friendsList = await getFriends(req.userId, req.supabase);
+    } catch (e) {
+      console.warn('⚠️ Could not load friends list for smart-chat context:', e.message);
+    }
+    const friendNamesForPrompt = friendsList.map(f => {
+      const name = f?.friend?.display_name || '';
+      const email = f?.friend?.email || '';
+      return `${name}${email ? ` <${email}>` : ''}`.trim();
+    }).filter(Boolean);
+    const friendsContext = friendNamesForPrompt.length > 0
+      ? `\n\nYOUR FRIENDS (valid meeting recipients): ${friendNamesForPrompt.join(', ')}`
+      : `\n\nYOU HAVE NO FRIENDS ADDED YET (do not suggest meeting requests).`;
     
-    // Enhanced prompt with precise date awareness
+    // Enhanced prompt with precise date awareness and stricter meeting rules
     const smartPrompt = `You are Tilly, a helpful calendar assistant with precise date and time awareness.
 
 ⚠️ CRITICAL RULES:
-1. When user wants to "meet", "book", or "schedule" with a friend → IMMEDIATELY output request_meeting_with_friend pattern
-2. When user wants personal reminders/events → output CREATE_EVENT pattern
-3. Be brief - no tool explanations or verbose responses
-4. Don't mention "tools", "patterns", or "outlined events" - just say you're sending the request
+1. Only suggest request_meeting_with_friend if the user explicitly asks to schedule/book/request a meeting with a person who is in the user's friends list below. If the person is not a friend, DO NOT suggest a meeting request.
+2. For personal reminders or events (no other person), use CREATE_EVENT.
+3. Be brief: one concise sentence, then the action pattern. Do not explain tools or patterns.
+4. Never mention "tools", "patterns", or implementation details.
 
 📅 CURRENT DATE & TIME CONTEXT:
 - TODAY is ${todayStr}
 - Current local time: ${tzInfo.localTimeStr} (${tzInfo.tzAbbr})
 - Current date string: ${todayStr} (YYYY-MM-DD format)
 - Tomorrow date string: ${tomorrowStr} (YYYY-MM-DD format)
+${friendsContext}
 
-🎯 CRITICAL DATE INTERPRETATION RULES:
-1. When user says "today" → Always use date ${todayStr}
-2. When user says "tomorrow" → Always use date ${tomorrowStr}
-3. When user says "3pm today" → Create event for ${todayStr}T15:00:00
-4. When user says "3pm" without specifying day → Assume TODAY (${todayStr}T15:00:00)
-5. When user says a day name like "Monday" → Find the next upcoming Monday from today
-6. Always double-check: is this for today (${todayStr}) or another day?
+🎯 DATE INTERPRETATION:
+1. "today" → ${todayStr}
+2. "tomorrow" → ${tomorrowStr}
+3. "3pm today" → ${todayStr}T15:00:00
+4. Bare times like "3pm" → assume TODAY (${todayStr}T15:00:00)
+5. Day names like "Monday" → next upcoming occurrence
+6. Always verify intended date.
 
 ${eventsContext}${conversationHistory}
 
 User: ${message}
 
-ALWAYS respond with ONE brief sentence, then immediately add the action pattern:
+Respond with ONE brief sentence, then an action pattern if appropriate:
 
-"book meeting with stuart tomorrow at 5" → "I'll send Stuart a meeting request for tomorrow at 5 PM.
+"book meeting with Stuart tomorrow at 5" → "I'll send Stuart a meeting request for tomorrow at 5 PM.
 request_meeting_with_friend: {friend: "Stuart", date: "${tomorrowStr}", time: "17:00", title: "Meeting with Stuart", duration: 30}"
 
 "remind me to call mom" → "I'll add that reminder.
 CREATE_EVENT: {title: "Call mom", date: "${todayStr}", time: "14:00", duration: 30}"
 
-ONE sentence + action pattern only!`;
+If the named person is not in the friends list above, do not output request_meeting_with_friend.`;
 
-    console.log('🤖 Making streamlined OpenAI request...');
-    console.log('🔍 DEBUG: OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
-    console.log('🔍 DEBUG: OPENAI_API_KEY length:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0);
-    console.log('🔍 DEBUG: OPENAI_API_KEY starts with sk-:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.startsWith('sk-') : false);
+    if (DEBUG) {
+      console.log('Making streamlined OpenAI request...');
+      console.log('OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
+    }
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -1745,7 +1767,7 @@ ONE sentence + action pattern only!`;
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: OPENAI_MODEL,
         max_tokens: 200, // Reduced for faster responses
         messages: [
           { role: 'system', content: 'You are Tilly, a helpful calendar assistant. Be concise.' },
@@ -1769,10 +1791,35 @@ ONE sentence + action pattern only!`;
     const aiData = await response.json();
     const aiResponse = aiData.choices[0].message.content;
     
-    console.log('🔍 AI Response:', aiResponse);
+    if (DEBUG) console.log('AI Response:', aiResponse);
     
     // Parse action suggestions from AI response
-    const suggestions = parseActionSuggestions(aiResponse, userTimeZone);
+    let suggestions = parseActionSuggestions(aiResponse, userTimeZone);
+
+    // Filter out meeting requests for non-friends; normalize friend names
+    if (suggestions && suggestions.length > 0) {
+      const normalizedFriends = friendsList.map(f => ({
+        id: f?.friend?.id,
+        name: (f?.friend?.display_name || '').toLowerCase(),
+        email: (f?.friend?.email || '').toLowerCase(),
+        display_name: f?.friend?.display_name || f?.friend?.email || 'Friend'
+      }));
+
+      const beforeCount = suggestions.length;
+      suggestions = suggestions.map(s => {
+        if (s.type !== 'request_meeting_with_friend') return s;
+        const target = (s.friend_name || '').toLowerCase();
+        const match = normalizedFriends.find(fr =>
+          (fr.name && fr.name.includes(target)) || (fr.email && fr.email.includes(target))
+        );
+        if (!match) return { ...s, _filtered_out: true };
+        return { ...s, friend_name: match.display_name };
+      }).filter(s => !s._filtered_out);
+      const afterCount = suggestions.length;
+      if (afterCount !== beforeCount) {
+        console.log(`🧹 Filtered out ${beforeCount - afterCount} non-friend meeting request suggestion(s).`);
+      }
+    }
     
     // Clean the response text by removing action patterns
     const cleanedResponse = aiResponse
@@ -1782,8 +1829,10 @@ ONE sentence + action pattern only!`;
       .replace(/\s+/g, ' ')
       .trim();
     
-    console.log('🔍 Parsed suggestions:', suggestions);
-    console.log('🔍 Cleaned response:', cleanedResponse);
+    if (DEBUG) {
+      console.log('Parsed suggestions:', suggestions);
+      console.log('Cleaned response:', cleanedResponse);
+    }
     
     res.json({
       response: cleanedResponse,
@@ -1974,7 +2023,7 @@ Assistant:`;
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: OPENAI_MODEL,
         max_tokens: 1000,
         messages: [
           { role: 'system', content: 'You are Tilly, a helpful calendar assistant.' },
@@ -2059,8 +2108,8 @@ Assistant:`;
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          max_tokens: 1000,
+          model: OPENAI_MODEL,
+          max_tokens: 400,
           messages: conversationMessages,
           temperature: 0.3
         })
@@ -3186,11 +3235,18 @@ app.post('/api/events/import-url', authenticateUser, upload.none(), async (req, 
     console.log(`📡 Importing from URL: ${url}${subscribe ? ' (with subscription)' : ''}`);
 
     // Convert webcal:// to https:// (webcal is just https with subscription intent)
-    const fetchUrl = url.replace(/^webcal:\/\//, 'https://');
-    console.log(`🔄 Converted URL for fetch: ${fetchUrl}`);
+    const baseUrl = url.replace(/^webcal:\/\//, 'https://');
+    const fetchUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}nocache=${Date.now()}`;
+    console.log(`Converted URL for fetch: ${fetchUrl}`);
 
     // Fetch iCal data
-    const response = await fetch(fetchUrl);
+    const response = await fetch(fetchUrl, {
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'TillyCalendar/1.0 (import-url)',
+        'Accept': 'text/calendar, text/plain;q=0.8, */*;q=0.5'
+      }
+    });
     if (!response.ok) {
       throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
     }
@@ -3368,10 +3424,17 @@ app.post('/api/calendar-subscriptions/:id/sync', authenticateUser, async (req, r
     console.log(`🔄 Syncing calendar: ${subscription.name}`);
 
     // Convert webcal:// to https:// for fetching
-    const fetchUrl = subscription.url.replace(/^webcal:\/\//, 'https://');
+    const baseUrl = subscription.url.replace(/^webcal:\/\//, 'https://');
+    const fetchUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}nocache=${Date.now()}`;
 
     // Fetch latest iCal data
-    const response = await fetch(fetchUrl);
+    const response = await fetch(fetchUrl, {
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'TillyCalendar/1.0 (manual-sync)',
+        'Accept': 'text/calendar, text/plain;q=0.8, */*;q=0.5'
+      }
+    });
     if (!response.ok) {
       throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
     }
@@ -3451,9 +3514,16 @@ app.post('/api/calendar-subscriptions/sync-all', authenticateUser, async (req, r
         console.log(`🔄 Auto-syncing: ${subscription.name}`);
         
         // Convert webcal:// to https:// for fetching
-        const fetchUrl = subscription.url.replace(/^webcal:\/\//, 'https://');
+        const baseUrl = subscription.url.replace(/^webcal:\/\//, 'https://');
+        const fetchUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}nocache=${Date.now()}`;
         
-        const response = await fetch(fetchUrl);
+        const response = await fetch(fetchUrl, {
+          redirect: 'follow',
+          headers: {
+            'User-Agent': 'TillyCalendar/1.0 (bulk-sync)',
+            'Accept': 'text/calendar, text/plain;q=0.8, */*;q=0.5'
+          }
+        });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -3551,7 +3621,14 @@ const startAutoSync = () => {
   // COST OPTIMIZATION: Reduced sync frequency from 30min to 2hrs to reduce CPU/bandwidth costs
   syncInterval = setInterval(async () => {
     try {
-      console.log('🔄 Auto-sync starting...');
+      console.log('Auto-sync starting...');
+      // Use service role for background sync to satisfy RLS safely
+      const { createClient } = require('@supabase/supabase-js');
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        console.warn('Auto-sync: SUPABASE_SERVICE_ROLE_KEY not set. Auto-sync may fail due to RLS.');
+      }
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+      const serviceClient = createClient(process.env.SUPABASE_URL, serviceKey);
       
       // Fetch all subscriptions from all users that have sync enabled
       const allSubscriptions = await getAllCalendarSubscriptionsForAutoSync();
@@ -3567,28 +3644,33 @@ const startAutoSync = () => {
         return acc;
       }, {});
 
-      console.log(`Found subscriptions for ${Object.keys(subscriptionsByUser).length} users.`);
+      if (DEBUG) console.log(`Found subscriptions for ${Object.keys(subscriptionsByUser).length} users.`);
 
       // Process each user's subscriptions independently
       for (const userId in subscriptionsByUser) {
         const userSubscriptions = subscriptionsByUser[userId];
-        console.log(`Processing ${userSubscriptions.length} subscriptions for user ${userId}...`);
+        if (DEBUG) console.log(`Processing ${userSubscriptions.length} subscriptions for user ${userId}...`);
 
         for (const subscription of userSubscriptions) {
           try {
-            console.log(`🔄 Auto-syncing: ${subscription.name} for user ${userId}`);
+            if (DEBUG) console.log(`Auto-syncing: ${subscription.name} for user ${userId}`);
             
-            // Convert webcal:// to https:// for fetching
-            const fetchUrl = subscription.url ? subscription.url.replace(/^webcal:\/\//, 'https://') : null;
+            // Convert webcal:// to https:// for fetching and add cache-buster
+            const baseUrl = subscription.url ? subscription.url.replace(/^webcal:\/\//, 'https://') : null;
+            const fetchUrl = baseUrl ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}nocache=${Date.now()}` : null;
             
             if (!fetchUrl) {
               console.log(`⚠️ Skipping subscription with invalid URL: ${subscription.name}`);
               continue;
             }
             
-            const response = await fetch(fetchUrl, { 
-              timeout: 10000,
-              signal: AbortSignal.timeout(10000) 
+            const response = await fetch(fetchUrl, {
+              redirect: 'follow',
+              headers: {
+                'User-Agent': 'TillyCalendar/1.0 (auto-sync)',
+                'Accept': 'text/calendar, text/plain;q=0.8, */*;q=0.5'
+              },
+              signal: AbortSignal.timeout(15000)
             });
             
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -3627,32 +3709,30 @@ const startAutoSync = () => {
             }
             
             // Import events for this specific user
-            const result = await importEventsFromSubscription(subscription.id, eventsData, userId, null);
+            const result = await importEventsFromSubscription(subscription.id, eventsData, userId, serviceClient);
             // Update sync timestamp for this specific user's subscription
-            await updateCalendarSync(subscription.id, new Date(), userId);
+            await updateCalendarSync(subscription.id, new Date(), userId, serviceClient);
             
-            console.log(`✅ Sync complete for ${subscription.name}: ${result.successful}/${result.total} events`);
+            if (DEBUG) console.log(`Sync complete for ${subscription.name}: ${result.successful}/${result.total} events`);
             
           } catch (syncError) {
-            console.error(`⚠️ Sync failed for ${subscription.name} (User: ${userId}):`, syncError.message);
+            console.error(`Sync failed for ${subscription.name} (User: ${userId}):`, syncError.message);
           }
         }
       }
       
-      console.log(`✅ Auto-sync cycle complete.`);
-      
+      if (DEBUG) console.log(`Auto-sync cycle complete.`);
+    
     } catch (error) {
-      console.error('❌ Auto-sync master error:', error.message);
+      console.error('Auto-sync master error:', error.message);
     }
   }, 2 * 60 * 60 * 1000); // 2 hours (reduced from 30min to save costs)
   
-  console.log('🕐 Auto-sync enabled (every 2 hours - optimized for cost)');
+  console.log('Auto-sync enabled (every 2 hours - optimized for cost)');
 };
 
 // Start auto-sync after server initialization
-setTimeout(() => {
-  startAutoSync();
-}, 5000); // Wait 5 seconds after server start
+// Defer auto-sync to server start below (avoids duplicate intervals)
 
 // POST /api/events/:id/invite - Send calendar invitation via email
 app.post('/api/events/:id/invite', async (req, res) => {
@@ -3673,9 +3753,12 @@ app.post('/api/events/:id/invite', async (req, res) => {
       });
     }
     
-    // Get the event from database
-    const allEvents = await getAllEvents(req.userId, req.supabase);
-    const event = allEvents.find(e => e.id === parseInt(id));
+    // Get the event from database (fetch only what we need)
+    const eventId = parseInt(id);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: 'Invalid event ID' });
+    }
+    const event = await getEventById(eventId, req.userId, req.supabase);
     
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
@@ -3707,15 +3790,15 @@ app.post('/api/events/:id/invite', async (req, res) => {
           subject: `Calendar Invite: ${event.title}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #3b82f6;">📅 You're Invited!</h2>
+              <h2 style="color: #3b82f6;">You're Invited!</h2>
               
               <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
                 <h3 style="margin-top: 0; color: #1f2937;">${event.title}</h3>
                 <p style="margin: 8px 0; color: #6b7280;">
-                  📅 <strong>Date:</strong> ${new Date(event.start).toLocaleDateString()}
+                  <strong>Date:</strong> ${new Date(event.start).toLocaleDateString()}
                 </p>
                 <p style="margin: 8px 0; color: #6b7280;">
-                  🕐 <strong>Time:</strong> ${new Date(event.start).toLocaleTimeString()} - ${new Date(event.end).toLocaleTimeString()}
+                  <strong>Time:</strong> ${new Date(event.start).toLocaleTimeString()} - ${new Date(event.end).toLocaleTimeString()}
                 </p>
                 ${message ? `<p style="margin: 8px 0; color: #6b7280;"><strong>Message:</strong> ${message}</p>` : ''}
               </div>
@@ -3843,8 +3926,8 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     
     // Use OpenAI API for intelligent calendar assistance
     const requestBody = {
-      model: 'gpt-4o-mini',
-      max_tokens: 1000,
+      model: OPENAI_MODEL,
+      max_tokens: 600,
       messages: [{
         role: 'system',
         content: 'You are Tilly, a helpful calendar assistant. Respond concisely and always include the requested JSON format at the end of your response when handling scheduling requests.'

@@ -104,7 +104,7 @@ const getAllEvents = async (userId, authenticatedSupabase = null) => {
               const requesterName = request.requester?.display_name || request.requester?.email || `User ${request.requester_id}`;
               proposedEvents.push({
                 id: `meeting-request-${request.id}-${index}`,
-                title: `📅 ${request.title} - ${requesterName}`,
+                title: `${request.title} - ${requesterName}`,
                 start: start,
                 end: end,
                 type: 'meeting_request',
@@ -168,7 +168,7 @@ const getAllEvents = async (userId, authenticatedSupabase = null) => {
             
             proposedEvents.push({
               id: `sent-request-${request.id}-${proposedTime}`,
-              title: `📤 ${request.title} (pending)`,
+              title: `${request.title} (pending)`,
               start: start,
               end: end,
               type: 'sent_meeting_request',

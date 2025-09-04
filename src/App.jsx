@@ -583,13 +583,14 @@ const App = () => {
           // If friends check fails, proceed to server which enforces the rule anyway
         }
         
-        const response = await fetch('/api/ai/execute-tools', {
+        const response = await fetch('/api/ai', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session?.access_token}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
+            action: 'execute-tools',
             tools: [{
               name: 'request_meeting_with_friend',
               input: {
@@ -1195,11 +1196,12 @@ const App = () => {
         'Authorization': `Bearer ${session?.access_token}`
       }
 
-      // Use new streamlined AI endpoint with chat history
-      const response = await fetch('/api/ai/smart-chat', {
+      // Use unified AI endpoint with chat history
+      const response = await fetch('/api/ai', {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
+          action: 'chat',  // Specify chat action
           message: messageText,
           chatHistory: messages.slice(-5), // Send last 5 messages for context
           userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone

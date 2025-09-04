@@ -55,9 +55,178 @@ const PORT = process.env.PORT || 8080;
 
 // Centralized OpenAI model selection
 // Default to GPT-4o (base model, not reasoning) with env override
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 const DEBUG = process.env.DEBUG === 'true';
 const DISABLE_THINKING = process.env.OPENAI_DISABLE_THINKING === 'true';
+
+// OpenAI Tools definition for GPT-5 function calling
+const OPENAI_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "get_calendar_events",
+      description: "Get calendar events for a specific date range or all events if no range provided. Use this to check existing events before scheduling.",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: {
+            type: "string",
+            description: "Start date in ISO format (YYYY-MM-DD) - optional"
+          },
+          end_date: {
+            type: "string", 
+            description: "End date in ISO format (YYYY-MM-DD) - optional"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_event",
+      description: "Create a new calendar event for the current user only. For meetings with friends, use request_meeting_with_friend instead. Always check for conflicts first using get_calendar_events.",
+      parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Event title"
+        },
+        start_time: {
+          type: "string",
+          description: "Start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        end_time: {
+          type: "string",
+          description: "End time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        description: {
+          type: "string",
+          description: "Optional event description"
+        }
+      },
+        required: ["title", "start_time", "end_time"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "move_event",
+      description: "Move/reschedule an existing event to a new time and optionally change its title. Use check_time_conflicts first to ensure no conflicts.",
+      parameters: {
+      type: "object",
+      properties: {
+        event_id: {
+          type: "integer",
+          description: "ID of the event to move"
+        },
+        new_start_time: {
+          type: "string",
+          description: "New start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        new_end_time: {
+          type: "string",
+          description: "New end time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        new_title: {
+          type: "string",
+          description: "Optional: New title for the event. Use this when renaming and moving in one operation."
+        }
+      },
+        required: ["event_id", "new_start_time", "new_end_time"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_time_conflicts",
+      description: "Check if a proposed time slot conflicts with existing events.",
+      parameters: {
+      type: "object",
+      properties: {
+        start_time: {
+          type: "string",
+          description: "Proposed start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        end_time: {
+          type: "string",
+          description: "Proposed end time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        exclude_event_id: {
+          type: "integer",
+          description: "Optional: Event ID to exclude from conflict check (for rescheduling)"
+        }
+      },
+        required: ["start_time", "end_time"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_event",
+      description: "Delete/cancel an existing event by ID.",
+      parameters: {
+      type: "object",
+      properties: {
+        event_id: {
+          type: "integer",
+          description: "ID of the event to delete"
+        }
+      },
+        required: ["event_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "request_meeting_with_friend",
+      description: "Send a meeting request to a friend. This will notify them via email and let them accept/decline the meeting. Only works for users who are friends.",
+      parameters: {
+      type: "object",
+      properties: {
+        friend_name: {
+          type: "string",
+          description: "Name of the friend to meet with"
+        },
+        meeting_title: {
+          type: "string",
+          description: "Title for the meeting"
+        },
+        proposed_start_time: {
+          type: "string",
+          description: "Proposed start time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        proposed_end_time: {
+          type: "string",
+          description: "Proposed end time in local timezone format (YYYY-MM-DDTHH:MM:SS) - do NOT include Z suffix"
+        },
+        message: {
+          type: "string",
+          description: "Optional personal message to include with the meeting request"
+        }
+      },
+        required: ["friend_name", "meeting_title", "proposed_start_time", "proposed_end_time"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_friends_list",
+      description: "Get the list of user's friends to check if someone is a friend before scheduling meetings.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: []
+      }
+    }
+  }
+];
 
 // Select model, optionally mapping away from thinking models if disabled
 function selectModel(inputModel, disableThinking = DISABLE_THINKING) {
@@ -523,11 +692,16 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, max_completion_tokens, response_format, stream } = req.body;
 
+    const selectedModel = selectModel(model || OPENAI_MODEL);
     const requestBody = {
-      model: selectModel(model || OPENAI_MODEL),
-      messages: messages,
-      temperature: typeof temperature === 'number' ? temperature : 0.3
+      model: selectedModel,
+      messages: messages
     };
+
+    // GPT-5 doesn't support temperature
+    if (!selectedModel.startsWith('gpt-5')) {
+      requestBody.temperature = typeof temperature === 'number' ? temperature : 0.3;
+    }
 
     if (typeof stream !== 'undefined') requestBody.stream = stream;
     if (typeof max_completion_tokens !== 'undefined') requestBody.max_completion_tokens = max_completion_tokens;
@@ -535,7 +709,7 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
     else {
       // Use higher default for GPT-5 and reasoning models
       const isReasoningModel = model && (model.startsWith('gpt-5') || model.startsWith('o1-'));
-      requestBody.max_tokens = isReasoningModel ? 5000 : 1000;
+      requestBody.max_tokens = isReasoningModel ? 8000 : 1000;
     }
 
     // Add response_format if specified
@@ -545,8 +719,6 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
 
     // Normalize token parameter for the selected model
     normalizeTokenParamForModel(requestBody);
-
-    console.log('🤖 Making OpenAI API request...');
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -557,15 +729,6 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
       body: JSON.stringify(requestBody)
     });
 
-    // Enhanced logging for debugging
-    try {
-      const reqModel = requestBody.model;
-      const reqMax = requestBody.max_completion_tokens ?? requestBody.max_tokens;
-      console.log('🤖 OpenAI proxy request summary:', { model: reqModel, stream: !!requestBody.stream, tokens: reqMax });
-      const requestId = response.headers.get('x-request-id');
-      if (requestId) console.log('🧾 OpenAI x-request-id:', requestId);
-    } catch (_) {}
-
     if (!response.ok) {
       const errorText = await response.text();
       console.error('OpenAI API error:', errorText);
@@ -573,24 +736,24 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
     }
 
     const data = await response.json();
-    
-    // Debug logging for GPT-5 responses
-    if (requestBody.model && requestBody.model.startsWith('gpt-5')) {
-      console.log('🔍 GPT-5 Response structure:', {
-        hasChoices: !!data.choices,
-        choicesLength: data.choices?.length,
-        firstChoice: data.choices?.[0] ? Object.keys(data.choices[0]) : null,
-        messageKeys: data.choices?.[0]?.message ? Object.keys(data.choices[0].message) : null,
-        contentSample: data.choices?.[0]?.message?.content ? 
-          data.choices[0].message.content.substring(0, 100) : 'No content field'
-      });
-    }
-    
     res.json(data);
 
   } catch (error) {
     console.error('Error processing OpenAI request:', error);
     res.status(500).json({ error: error.message || 'Failed to process OpenAI request' });
+  }
+});
+
+// Simple AI endpoint - route to smart-chat 
+app.post('/api/ai', (req, res) => {
+  const { action } = req.body;
+  
+  if (action === 'chat') {
+    res.redirect(307, '/api/ai/smart-chat');
+  } else if (action === 'execute-tools') {
+    res.redirect(307, '/api/ai/execute-tools');
+  } else {
+    res.status(400).json({ error: `Unknown action: ${action}` });
   }
 });
 
@@ -1897,12 +2060,14 @@ If the named person is not in the friends list above, do not output request_meet
       },
       body: JSON.stringify(normalizeTokenParamForModel({
         model: selectModel(OPENAI_MODEL),
-        max_completion_tokens: 2000, // Increased for GPT-5
+        max_completion_tokens: 4000, // Reduced for mini model
+        reasoning_effort: "minimal", // Fast responses for GPT-5
+        verbosity: "low", // Concise responses perfect for calendar tasks
         messages: [
-          { role: 'system', content: 'You are Tilly, a helpful calendar assistant. Be concise.' },
+          { role: 'system', content: 'You are Tilly, a helpful calendar assistant. Be concise and direct.' },
           { role: 'user', content: smartPrompt }
-        ],
-        temperature: 0.3
+        ]
+        // temperature removed for GPT-5 compatibility
       }))
     });
 

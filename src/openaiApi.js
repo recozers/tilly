@@ -1,6 +1,6 @@
 // OpenAI API integration for calendar event parsing
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
-const CLIENT_OPENAI_MODEL = import.meta.env?.VITE_OPENAI_MODEL || 'gpt-5';
+const CLIENT_OPENAI_MODEL = import.meta.env?.VITE_OPENAI_MODEL || 'gpt-5-mini';
 
 // Debug logging (guarded)
 const IS_DEBUG = !!import.meta.env?.VITE_DEBUG;
@@ -47,6 +47,12 @@ Rules:
 Current date and time: ${new Date().toISOString()}`;
 
 export const parseEventRequest = async (userMessage) => {
+  console.log('\\n🚀 ========== CLIENT: PARSING EVENT REQUEST ==========');
+  console.log('🚀 Message:', userMessage);
+  console.log('🚀 Model:', CLIENT_OPENAI_MODEL);
+  console.log('🚀 API Key available:', !!OPENAI_API_KEY);
+  console.log('🚀 Debug mode:', IS_DEBUG);
+  
   if (IS_DEBUG) {
     console.log('parseEventRequest called with:', userMessage);
     console.log('API Key available:', !!OPENAI_API_KEY);
@@ -74,8 +80,8 @@ export const parseEventRequest = async (userMessage) => {
       ],
       // GPT-5 doesn't support temperature parameter
       // temperature: 0.3,
-      // Use higher token limit for GPT-5
-      max_completion_tokens: 5000,
+      // Use max token limit for GPT-5 
+      max_completion_tokens: 16000,
       response_format: { type: "json_object" }
     };
     

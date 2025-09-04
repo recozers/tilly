@@ -72,8 +72,10 @@ export const parseEventRequest = async (userMessage) => {
           content: userMessage
         }
       ],
-      temperature: 0.3,
-      max_tokens: 1000,
+      // GPT-5 doesn't support temperature parameter
+      // temperature: 0.3,
+      // Use higher token limit for GPT-5
+      max_completion_tokens: 5000,
       response_format: { type: "json_object" }
     };
     
@@ -97,7 +99,38 @@ export const parseEventRequest = async (userMessage) => {
 
     const data = await response.json();
     if (IS_DEBUG) console.log('API response data:', data);
-    const content = data.choices[0].message.content;
+    
+    // Extract content - handle both standard and reasoning model responses
+    let content = '';
+    if (data.choices && data.choices[0]) {
+      const choice = data.choices[0];
+      // Standard response format
+      if (choice.message?.content) {
+        content = choice.message.content;
+      } 
+      // Reasoning model format (GPT-5/o1)
+      else if (choice.message?.reasoning_content) {
+        content = choice.message.reasoning_content;
+      }
+      // Fallback: look for any content field
+      else if (choice.message) {
+        for (const key of Object.keys(choice.message)) {
+          if (key.includes('content') && choice.message[key]) {
+            content = choice.message[key];
+            if (IS_DEBUG) console.log(`Found content in field: ${key}`);
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!content) {
+      console.error('No content found in API response:', data);
+      return {
+        intent: 'general',
+        response: "I'm having trouble processing your request. Please try again."
+      };
+    }
     
     // Parse the JSON response from OpenAI
     try {

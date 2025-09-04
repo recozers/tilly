@@ -54,9 +54,79 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Centralized OpenAI model selection
-// Default to GPT-5 with env override and graceful fallback via API error handling
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+// Default to GPT-4o (base model, not reasoning) with env override
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const DEBUG = process.env.DEBUG === 'true';
+const DISABLE_THINKING = process.env.OPENAI_DISABLE_THINKING === 'true';
+
+// Select model, optionally mapping away from thinking models if disabled
+function selectModel(inputModel, disableThinking = DISABLE_THINKING) {
+  const base = inputModel || OPENAI_MODEL;
+  // Map GPT-5 to GPT-4o if thinking models are disabled or if GPT-5 is not available
+  if (disableThinking && /^(gpt-5|o1-)/.test(base)) {
+    console.log(`🔄 Mapping ${base} to GPT-4o (reasoning models disabled)`);
+    return process.env.OPENAI_THINKING_FALLBACK_MODEL || 'gpt-4o';
+  }
+  return base;
+}
+// Helper to normalize token limit parameter for models with different naming
+function normalizeTokenParamForModel(body, modelOverride, disableThinkingOverride) {
+  try {
+    const disableThinking = typeof disableThinkingOverride === 'boolean' ? disableThinkingOverride : DISABLE_THINKING;
+    const selectedModel = selectModel(modelOverride || body.model || OPENAI_MODEL, disableThinking);
+    body.model = selectedModel;
+    const isReasoningModel = typeof selectedModel === 'string' && (selectedModel.startsWith('gpt-5') || selectedModel.startsWith('o1-'));
+    const hasMaxTokens = Object.prototype.hasOwnProperty.call(body, 'max_tokens');
+    const hasMaxCompletion = Object.prototype.hasOwnProperty.call(body, 'max_completion_tokens');
+    if (isReasoningModel) {
+      console.log(`⚡ Using reasoning model: ${selectedModel}`);
+      if (hasMaxTokens && !hasMaxCompletion) {
+        body.max_completion_tokens = body.max_tokens;
+      }
+      if (hasMaxTokens) delete body.max_tokens;
+      // Reasoning models only support default temperature (1)
+      if (Object.prototype.hasOwnProperty.call(body, 'temperature') && body.temperature !== 1) {
+        delete body.temperature;
+      }
+    } else {
+      if (!hasMaxTokens && hasMaxCompletion) {
+        body.max_tokens = body.max_completion_tokens;
+      }
+      if (hasMaxCompletion) delete body.max_completion_tokens;
+    }
+  } catch (_) { /* no-op */ }
+  return body;
+}
+
+// Helper function to extract content from OpenAI response (handles both standard and reasoning models)
+function extractMessageContent(choice) {
+  if (!choice) return '';
+  
+  // Standard models: content is in message.content
+  if (choice.message?.content) {
+    return choice.message.content;
+  }
+  
+  // Reasoning models (GPT-5/o1): might have content in different location
+  // Check for reasoning_content or other fields
+  if (choice.message?.reasoning_content) {
+    return choice.message.reasoning_content;
+  }
+  
+  // Fallback: try to find any content field
+  if (choice.message) {
+    // Look for any key containing 'content'
+    for (const key of Object.keys(choice.message)) {
+      if (key.includes('content') && choice.message[key]) {
+        console.log(`📝 Found content in field: ${key}`);
+        return choice.message[key];
+      }
+    }
+  }
+  
+  console.warn('⚠️ Could not extract content from choice:', JSON.stringify(choice));
+  return '';
+}
 
 // Simple in-memory cache for AI responses
 const responseCache = new Map();
@@ -451,19 +521,30 @@ const authenticateUser = async (req, res, next) => {
 // OpenAI API proxy endpoint
 app.post('/api/openai', authenticateUser, async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, response_format } = req.body;
+    const { model, messages, temperature, max_tokens, max_completion_tokens, response_format, stream } = req.body;
 
     const requestBody = {
-      model: model || OPENAI_MODEL,
+      model: selectModel(model || OPENAI_MODEL),
       messages: messages,
-      temperature: temperature || 0.3,
-      max_tokens: max_tokens || 1000
+      temperature: typeof temperature === 'number' ? temperature : 0.3
     };
+
+    if (typeof stream !== 'undefined') requestBody.stream = stream;
+    if (typeof max_completion_tokens !== 'undefined') requestBody.max_completion_tokens = max_completion_tokens;
+    else if (typeof max_tokens !== 'undefined') requestBody.max_tokens = max_tokens;
+    else {
+      // Use higher default for GPT-5 and reasoning models
+      const isReasoningModel = model && (model.startsWith('gpt-5') || model.startsWith('o1-'));
+      requestBody.max_tokens = isReasoningModel ? 5000 : 1000;
+    }
 
     // Add response_format if specified
     if (response_format) {
       requestBody.response_format = response_format;
     }
+
+    // Normalize token parameter for the selected model
+    normalizeTokenParamForModel(requestBody);
 
     console.log('🤖 Making OpenAI API request...');
     
@@ -476,6 +557,15 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
       body: JSON.stringify(requestBody)
     });
 
+    // Enhanced logging for debugging
+    try {
+      const reqModel = requestBody.model;
+      const reqMax = requestBody.max_completion_tokens ?? requestBody.max_tokens;
+      console.log('🤖 OpenAI proxy request summary:', { model: reqModel, stream: !!requestBody.stream, tokens: reqMax });
+      const requestId = response.headers.get('x-request-id');
+      if (requestId) console.log('🧾 OpenAI x-request-id:', requestId);
+    } catch (_) {}
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error('OpenAI API error:', errorText);
@@ -483,6 +573,19 @@ app.post('/api/openai', authenticateUser, async (req, res) => {
     }
 
     const data = await response.json();
+    
+    // Debug logging for GPT-5 responses
+    if (requestBody.model && requestBody.model.startsWith('gpt-5')) {
+      console.log('🔍 GPT-5 Response structure:', {
+        hasChoices: !!data.choices,
+        choicesLength: data.choices?.length,
+        firstChoice: data.choices?.[0] ? Object.keys(data.choices[0]) : null,
+        messageKeys: data.choices?.[0]?.message ? Object.keys(data.choices[0].message) : null,
+        contentSample: data.choices?.[0]?.message?.content ? 
+          data.choices[0].message.content.substring(0, 100) : 'No content field'
+      });
+    }
+    
     res.json(data);
 
   } catch (error) {
@@ -532,9 +635,9 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
     };
     
     // Use OpenAI API for intelligent calendar assistance
-    const requestBody = {
-      model: OPENAI_MODEL,
-      max_tokens: 600,
+    const requestBody = normalizeTokenParamForModel({
+      model: selectModel(OPENAI_MODEL),
+      max_completion_tokens: 5000,  // Increased for GPT-5
       stream: true,
       messages: [{
         role: 'system',
@@ -544,7 +647,7 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
         content: createCalendarPrompt(message, context)
       }],
       temperature: 0.3
-    };
+    });
 
     console.log('🔍 DEBUG: Events being sent to OpenAI:');
     console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
@@ -587,6 +690,7 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
     };
 
     const response = await makeOpenAIRequest();
+    try { const requestId = response.headers.get('x-request-id'); if (requestId) console.log('🧾 OpenAI x-request-id:', requestId); } catch (_) {}
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -610,6 +714,8 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     let fullResponse = '';
+    let lastFinishReason = null;
+    let totalChunks = 0;
     
     // Handle streaming response
     const reader = response.body.getReader();
@@ -638,15 +744,20 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
               const parsed = JSON.parse(data);
               
               // OpenAI streaming format
-              if (parsed.choices && parsed.choices[0]?.delta?.content) {
-                const text = parsed.choices[0].delta.content;
-                fullResponse += text;
-                
-                // Send streaming chunk to frontend
-                res.write(`data: ${JSON.stringify({ 
-                  type: 'chunk', 
-                  content: text 
-                })}\n\n`);
+              if (parsed.choices && parsed.choices[0]) {
+                if (parsed.choices[0].delta?.content) {
+                  const text = parsed.choices[0].delta.content;
+                  fullResponse += text;
+                  totalChunks += 1;
+                  // Send streaming chunk to frontend
+                  res.write(`data: ${JSON.stringify({ 
+                    type: 'chunk', 
+                    content: text 
+                  })}\n\n`);
+                }
+                if (Object.prototype.hasOwnProperty.call(parsed.choices[0], 'finish_reason') && parsed.choices[0].finish_reason) {
+                  lastFinishReason = parsed.choices[0].finish_reason;
+                }
               }
             } catch (e) {
               // Skip invalid JSON
@@ -656,6 +767,17 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
       }
       
       // Process the complete response
+      console.log('🔚 OpenAI stream finished', { chars: fullResponse.length, chunks: totalChunks, finish_reason: lastFinishReason });
+      if (!fullResponse.trim()) {
+        res.write(`data: ${JSON.stringify({ 
+          type: 'error', 
+          error: 'Empty response from model',
+          finish_reason: lastFinishReason || 'unknown'
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
       const jsonMatch = fullResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);
       
       if (jsonMatch) {
@@ -701,6 +823,13 @@ app.post('/api/claude', authenticateUser, async (req, res) => {
       }
       
       // Send final response
+      if (lastFinishReason === 'length') {
+        res.write(`data: ${JSON.stringify({ 
+          type: 'warning', 
+          message: 'Response truncated due to token limit',
+          finish_reason: 'length'
+        })}\n\n`);
+      }
       res.write(`data: ${JSON.stringify({ 
         type: 'complete',
         response: fullResponse, 
@@ -1434,14 +1563,14 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
       content: message
     });
 
-    const openaiRequest = {
-      model: OPENAI_MODEL,
-      max_tokens: 600,
+    const openaiRequest = normalizeTokenParamForModel({
+      model: selectModel(OPENAI_MODEL),
+      max_completion_tokens: 3000,  // Increased for GPT-5
       messages: messages,
       tools: tools,
       tool_choice: 'auto',
       temperature: 0.3
-    };
+    });
 
     console.log('🤖 Making OpenAI API request with tools...');
     console.log('🤖 Tools being sent:', JSON.stringify(tools, null, 2));
@@ -1571,12 +1700,12 @@ REMEMBER: Today is ${currentDate}. When in doubt about dates, always clarify wit
       
       console.log('🔄 Sending tool results back to OpenAI...');
       
-      const followUpRequest = {
-        model: OPENAI_MODEL,
-        max_tokens: 600,
+      const followUpRequest = normalizeTokenParamForModel({
+        model: selectModel(OPENAI_MODEL),
+        max_completion_tokens: 3000,  // Increased for GPT-5
         messages: conversationMessages,
         temperature: 0.3
-      };
+      });
       
       const followUpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -1766,15 +1895,15 @@ If the named person is not in the friends list above, do not output request_meet
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        max_tokens: 200, // Reduced for faster responses
+      body: JSON.stringify(normalizeTokenParamForModel({
+        model: selectModel(OPENAI_MODEL),
+        max_completion_tokens: 2000, // Increased for GPT-5
         messages: [
           { role: 'system', content: 'You are Tilly, a helpful calendar assistant. Be concise.' },
           { role: 'user', content: smartPrompt }
         ],
         temperature: 0.3
-      })
+      }))
     });
 
     if (!response.ok) {
@@ -1789,7 +1918,7 @@ If the named person is not in the friends list above, do not output request_meet
     }
 
     const aiData = await response.json();
-    const aiResponse = aiData.choices[0].message.content;
+    const aiResponse = extractMessageContent(aiData.choices[0]);
     
     if (DEBUG) console.log('AI Response:', aiResponse);
     
@@ -2022,9 +2151,9 @@ Assistant:`;
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        max_tokens: 1000,
+      body: JSON.stringify(normalizeTokenParamForModel({
+        model: selectModel(OPENAI_MODEL),
+        max_completion_tokens: 5000,  // Increased for GPT-5
         messages: [
           { role: 'system', content: 'You are Tilly, a helpful calendar assistant.' },
           { role: 'user', content: complexPrompt }
@@ -2032,7 +2161,7 @@ Assistant:`;
         tools: complexTools,
         tool_choice: 'auto',
         temperature: 0.3
-      })
+      }))
     });
 
     if (!response.ok) {
@@ -2107,16 +2236,16 @@ Assistant:`;
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
         },
-        body: JSON.stringify({
-          model: OPENAI_MODEL,
-          max_tokens: 400,
+        body: JSON.stringify(normalizeTokenParamForModel({
+          model: selectModel(OPENAI_MODEL),
+          max_completion_tokens: 3000,  // Increased for GPT-5
           messages: conversationMessages,
           temperature: 0.3
-        })
+        }))
       });
       
       const finalData = await finalResponse.json();
-      const finalText = finalData.choices[0].message.content;
+      const finalText = extractMessageContent(finalData.choices[0]);
       
       return res.json({
         response: finalText,
@@ -3925,9 +4054,9 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     }
     
     // Use OpenAI API for intelligent calendar assistance
-    const requestBody = {
+    const requestBody = normalizeTokenParamForModel({
       model: OPENAI_MODEL,
-      max_tokens: 600,
+      max_completion_tokens: 3000,  // Increased for GPT-5
       messages: [{
         role: 'system',
         content: 'You are Tilly, a helpful calendar assistant. Respond concisely and always include the requested JSON format at the end of your response when handling scheduling requests.'
@@ -3936,7 +4065,7 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
         content: createCalendarPrompt(query, calendarContext)
       }],
       temperature: 0.3
-    };
+    });
 
     console.log('🔍 DEBUG: Events being sent to OpenAI:');
     console.log('📅 Today events:', todayEvents.length, todayEvents.map(e => `${e.title} (${e.start} to ${e.end})`));
@@ -3996,7 +4125,7 @@ app.post('/api/calendar/query', authenticateUser, async (req, res) => {
     }
 
     const openaiData = await response.json();
-    const openaiResponse = openaiData.choices[0].message.content;
+    const openaiResponse = extractMessageContent(openaiData.choices[0]);
     
     // Try to extract JSON from the response (could be mixed with text)
     const jsonMatch = openaiResponse.match(/\{[\s\S]*"type":\s*"(event_suggestion|event_rearrangement|multiple_actions)"[\s\S]*\}/);

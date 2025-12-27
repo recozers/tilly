@@ -607,7 +607,7 @@ const importEvents = async (eventsData, userId, authenticatedSupabase = null) =>
   }
 };
 
-// Import events from subscription
+// Import events from subscription (LEGACY - use optimized sync engine instead)
 const importEventsFromSubscription = async (subscriptionId, eventsData, userId, authenticatedSupabase = null) => {
   if (!userId) throw new Error('SECURITY: userId is required for importEventsFromSubscription.');
   try {
@@ -669,6 +669,126 @@ const importEventsFromSubscription = async (subscriptionId, eventsData, userId, 
     };
   } catch (error) {
     console.error('Error importing events from subscription:', error);
+    throw error;
+  }
+};
+
+// NEW OPTIMIZED SYNC FUNCTIONS
+
+// Upsert events using ON CONFLICT for optimized sync
+const upsertEvents = async (events, authenticatedSupabase = null) => {
+  try {
+    if (!events || events.length === 0) {
+      return { inserted: 0, updated: 0 };
+    }
+
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    const { data, error } = await supabaseClient
+      .from('events')
+      .upsert(events, {
+        onConflict: 'source_calendar_id,source_event_uid,user_id',
+        ignoreDuplicates: false
+      })
+      .select();
+
+    if (error) throw error;
+
+    // Count inserted vs updated based on last_modified comparison
+    const now = new Date();
+    const recentThreshold = new Date(now - 1000); // Events modified in last second are new
+    
+    const inserted = data?.filter(e => new Date(e.last_modified) > recentThreshold).length || 0;
+    const updated = (data?.length || 0) - inserted;
+
+    return { inserted, updated, total: data?.length || 0 };
+  } catch (error) {
+    console.error('Error upserting events:', error);
+    throw error;
+  }
+};
+
+// Get events with recurring expansion support
+const getEventsWithExpansion = async (userId, startDate, endDate, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for getEventsWithExpansion.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Get base events (both one-time and recurring)
+    const { data: events, error } = await supabaseClient
+      .from('events')
+      .select('*')
+      .eq('user_id', userId)
+      .or(`start_time.gte.${startDate.toISOString()},rrule.not.is.null`);
+
+    if (error) throw error;
+
+    // Events will be expanded by the RRuleExpander in server.js
+    return events || [];
+  } catch (error) {
+    console.error('Error fetching events for expansion:', error);
+    throw error;
+  }
+};
+
+// Remove deleted events from subscription
+const removeDeletedEventsFromSubscription = async (subscriptionId, userId, keepEventUids, authenticatedSupabase = null) => {
+  if (!userId) throw new Error('SECURITY: userId is required for removeDeletedEventsFromSubscription.');
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    // Find events that exist in DB but not in current sync
+    const { data: existingEvents } = await supabaseClient
+      .from('events')
+      .select('id, source_event_uid')
+      .eq('source_calendar_id', subscriptionId)
+      .eq('user_id', userId);
+
+    if (!existingEvents || existingEvents.length === 0) {
+      return { deleted: 0 };
+    }
+
+    const uidsToDelete = existingEvents
+      .filter(e => !keepEventUids.includes(e.source_event_uid))
+      .map(e => e.source_event_uid);
+
+    if (uidsToDelete.length === 0) {
+      return { deleted: 0 };
+    }
+
+    const { error } = await supabaseClient
+      .from('events')
+      .delete()
+      .eq('source_calendar_id', subscriptionId)
+      .eq('user_id', userId)
+      .in('source_event_uid', uidsToDelete);
+
+    if (error) throw error;
+
+    return { deleted: uidsToDelete.length };
+  } catch (error) {
+    console.error('Error removing deleted events:', error);
+    throw error;
+  }
+};
+
+// Update subscription sync metadata
+const updateSubscriptionSyncMetadata = async (subscriptionId, metadata, authenticatedSupabase = null) => {
+  try {
+    const supabaseClient = authenticatedSupabase || supabase;
+    
+    const { error } = await supabaseClient
+      .from('calendar_subscriptions')
+      .update({
+        last_sync: new Date(),
+        last_etag: metadata.etag,
+        last_modified: metadata.lastModified
+      })
+      .eq('id', subscriptionId);
+
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error updating subscription sync metadata:', error);
     throw error;
   }
 };
@@ -1364,6 +1484,11 @@ module.exports = {
   deleteCalendarSubscription,
   importEvents,
   importEventsFromSubscription,
+  // New optimized sync functions
+  upsertEvents,
+  getEventsWithExpansion,
+  removeDeletedEventsFromSubscription,
+  updateSubscriptionSyncMetadata,
   getCalendarStats,
   isTimeSlotFree,
   getEventById,

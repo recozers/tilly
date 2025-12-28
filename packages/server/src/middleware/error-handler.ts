@@ -31,26 +31,6 @@ export class NotFoundError extends AppError {
 }
 
 /**
- * Unauthorized error
- */
-export class UnauthorizedError extends AppError {
-  constructor(message = 'Unauthorized') {
-    super(401, message);
-    this.name = 'UnauthorizedError';
-  }
-}
-
-/**
- * Forbidden error
- */
-export class ForbiddenError extends AppError {
-  constructor(message = 'Forbidden') {
-    super(403, message);
-    this.name = 'ForbiddenError';
-  }
-}
-
-/**
  * Bad request error
  */
 export class BadRequestError extends AppError {

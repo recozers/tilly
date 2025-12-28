@@ -28,17 +28,3 @@ export const logger = pino({
 export function createLogger(context: string): pino.Logger {
   return logger.child({ context });
 }
-
-/**
- * Request logger for Express middleware
- */
-export const requestLogger = {
-  log: (req: { method: string; url: string }, res: { statusCode: number }, responseTime: number) => {
-    logger.info({
-      method: req.method,
-      url: req.url,
-      statusCode: res.statusCode,
-      responseTime: `${responseTime}ms`,
-    }, 'request completed');
-  },
-};

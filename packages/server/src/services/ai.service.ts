@@ -317,7 +317,14 @@ export class AIService {
       throw new Error(`OpenAI API error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: ToolCall[];
+        };
+      }>;
+    };
     const choice = data.choices?.[0];
 
     return {

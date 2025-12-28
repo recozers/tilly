@@ -17,18 +17,29 @@ import { FriendRepository } from './repositories/friend.repository.js';
 // Services
 import { EventService } from './services/event.service.js';
 import { AIService } from './services/ai.service.js';
+import { StreamingAIService } from './services/streaming-ai.service.js';
+import { ICalService } from './services/ical.service.js';
 
 // Controllers
 import { EventsController } from './controllers/events.controller.js';
 import { AIController } from './controllers/ai.controller.js';
+import { ICalController } from './controllers/ical.controller.js';
 
 const logger = createLogger('App');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
+ * Application context with services for WebSocket integration
+ */
+export interface AppContext {
+  app: Express;
+  streamingAIService: StreamingAIService;
+}
+
+/**
  * Create and configure Express application
  */
-export function createApp(): Express {
+export function createApp(): AppContext {
   const app = express();
 
   // Basic middleware
@@ -64,15 +75,19 @@ export function createApp(): Express {
   // Services
   const eventService = new EventService(eventRepository, meetingRepository);
   const aiService = new AIService(eventService, friendRepository, meetingRepository);
+  const streamingAIService = new StreamingAIService(eventService, friendRepository, meetingRepository);
+  const icalService = new ICalService(eventRepository);
 
   // Controllers
   const eventsController = new EventsController(eventService);
   const aiController = new AIController(aiService);
+  const icalController = new ICalController(icalService);
 
   // API routes
   const apiRouter = createApiRouter({
     eventsController,
     aiController,
+    icalController,
   });
   app.use('/api', apiRouter);
 
@@ -93,5 +108,5 @@ export function createApp(): Express {
   app.use(notFoundHandler);
   app.use(errorHandler);
 
-  return app;
+  return { app, streamingAIService };
 }

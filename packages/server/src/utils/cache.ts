@@ -5,7 +5,7 @@ import { config } from '../config/index.js';
  * Generic LRU cache factory
  * Replaces the manual Map-based caching with proper eviction
  */
-export function createCache<K extends string | number, V>(options?: {
+export function createCache<K extends string | number, V extends NonNullable<unknown>>(options?: {
   max?: number;
   ttl?: number;
 }): LRUCache<K, V> {

@@ -14,6 +14,7 @@ import { EventRepository } from './repositories/event.repository.js';
 import { MeetingRepository } from './repositories/meeting.repository.js';
 import { FriendRepository } from './repositories/friend.repository.js';
 import { SubscriptionRepository } from './repositories/subscription.repository.js';
+import { FeedTokenRepository } from './repositories/feed-token.repository.js';
 
 // Services
 import { EventService } from './services/event.service.js';
@@ -21,12 +22,14 @@ import { AIService } from './services/ai.service.js';
 import { StreamingAIService } from './services/streaming-ai.service.js';
 import { ICalService } from './services/ical.service.js';
 import { SubscriptionService } from './services/subscription.service.js';
+import { FeedService } from './services/feed.service.js';
 
 // Controllers
 import { EventsController } from './controllers/events.controller.js';
 import { AIController } from './controllers/ai.controller.js';
 import { ICalController } from './controllers/ical.controller.js';
 import { SubscriptionController } from './controllers/subscription.controller.js';
+import { FeedController } from './controllers/feed.controller.js';
 
 const logger = createLogger('App');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,6 +79,7 @@ export function createApp(): AppContext {
   const meetingRepository = new MeetingRepository(supabase);
   const friendRepository = new FriendRepository(supabase);
   const subscriptionRepository = new SubscriptionRepository(supabase);
+  const feedTokenRepository = new FeedTokenRepository(supabase);
 
   // Services
   const eventService = new EventService(eventRepository, meetingRepository);
@@ -83,12 +87,14 @@ export function createApp(): AppContext {
   const streamingAIService = new StreamingAIService(eventService, friendRepository, meetingRepository);
   const icalService = new ICalService(eventRepository);
   const subscriptionService = new SubscriptionService(subscriptionRepository, eventRepository);
+  const feedService = new FeedService(feedTokenRepository, icalService);
 
   // Controllers
   const eventsController = new EventsController(eventService);
   const aiController = new AIController(aiService);
   const icalController = new ICalController(icalService);
   const subscriptionController = new SubscriptionController(subscriptionService);
+  const feedController = new FeedController(feedService);
 
   // API routes
   const apiRouter = createApiRouter({
@@ -96,6 +102,7 @@ export function createApp(): AppContext {
     aiController,
     icalController,
     subscriptionController,
+    feedController,
   });
   app.use('/api', apiRouter);
 

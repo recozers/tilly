@@ -13,27 +13,31 @@ import { createLogger } from './utils/logger.js';
 import { EventRepository } from './repositories/event.repository.js';
 import { MeetingRepository } from './repositories/meeting.repository.js';
 import { FriendRepository } from './repositories/friend.repository.js';
+import { SubscriptionRepository } from './repositories/subscription.repository.js';
 
 // Services
 import { EventService } from './services/event.service.js';
 import { AIService } from './services/ai.service.js';
 import { StreamingAIService } from './services/streaming-ai.service.js';
 import { ICalService } from './services/ical.service.js';
+import { SubscriptionService } from './services/subscription.service.js';
 
 // Controllers
 import { EventsController } from './controllers/events.controller.js';
 import { AIController } from './controllers/ai.controller.js';
 import { ICalController } from './controllers/ical.controller.js';
+import { SubscriptionController } from './controllers/subscription.controller.js';
 
 const logger = createLogger('App');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Application context with services for WebSocket integration
+ * Application context with services for WebSocket and sync integration
  */
 export interface AppContext {
   app: Express;
   streamingAIService: StreamingAIService;
+  subscriptionService: SubscriptionService;
 }
 
 /**
@@ -71,23 +75,27 @@ export function createApp(): AppContext {
   const eventRepository = new EventRepository(supabase);
   const meetingRepository = new MeetingRepository(supabase);
   const friendRepository = new FriendRepository(supabase);
+  const subscriptionRepository = new SubscriptionRepository(supabase);
 
   // Services
   const eventService = new EventService(eventRepository, meetingRepository);
   const aiService = new AIService(eventService, friendRepository, meetingRepository);
   const streamingAIService = new StreamingAIService(eventService, friendRepository, meetingRepository);
   const icalService = new ICalService(eventRepository);
+  const subscriptionService = new SubscriptionService(subscriptionRepository, eventRepository);
 
   // Controllers
   const eventsController = new EventsController(eventService);
   const aiController = new AIController(aiService);
   const icalController = new ICalController(icalService);
+  const subscriptionController = new SubscriptionController(subscriptionService);
 
   // API routes
   const apiRouter = createApiRouter({
     eventsController,
     aiController,
     icalController,
+    subscriptionController,
   });
   app.use('/api', apiRouter);
 
@@ -108,5 +116,5 @@ export function createApp(): AppContext {
   app.use(notFoundHandler);
   app.use(errorHandler);
 
-  return { app, streamingAIService };
+  return { app, streamingAIService, subscriptionService };
 }

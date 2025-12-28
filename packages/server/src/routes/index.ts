@@ -2,14 +2,17 @@ import { Router } from 'express';
 import { createEventsRouter } from './events.routes.js';
 import { createAIRouter } from './ai.routes.js';
 import { createICalRouter } from './ical.routes.js';
+import { createSubscriptionRouter } from './subscription.routes.js';
 import { EventsController } from '../controllers/events.controller.js';
 import { AIController } from '../controllers/ai.controller.js';
 import { ICalController } from '../controllers/ical.controller.js';
+import { SubscriptionController } from '../controllers/subscription.controller.js';
 
 export interface RouterDependencies {
   eventsController: EventsController;
   aiController: AIController;
   icalController: ICalController;
+  subscriptionController: SubscriptionController;
 }
 
 /**
@@ -22,6 +25,7 @@ export function createApiRouter(deps: RouterDependencies): Router {
   router.use('/events', createEventsRouter(deps.eventsController));
   router.use('/ai', createAIRouter(deps.aiController));
   router.use('/ical', createICalRouter(deps.icalController));
+  router.use('/subscriptions', createSubscriptionRouter(deps.subscriptionController));
 
   // Legacy endpoint compatibility
   router.use('/claude', createAIRouter(deps.aiController));
@@ -38,3 +42,4 @@ export function createApiRouter(deps: RouterDependencies): Router {
 export { createEventsRouter } from './events.routes.js';
 export { createAIRouter } from './ai.routes.js';
 export { createICalRouter } from './ical.routes.js';
+export { createSubscriptionRouter } from './subscription.routes.js';

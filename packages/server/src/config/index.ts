@@ -89,6 +89,12 @@ export const config = {
     maxIterations: optionalNumber('TOOL_LOOP_MAX_ITERATIONS', 10),
     timeoutMs: optionalNumber('TOOL_LOOP_TIMEOUT_MS', 60000), // 60 seconds
   },
+
+  // Calendar Sync
+  sync: {
+    enabled: optionalBool('SYNC_ENABLED', true),
+    intervalMs: optionalNumber('SYNC_INTERVAL_MS', 5 * 60 * 1000), // 5 minutes
+  },
 } as const;
 
 export type Config = typeof config;

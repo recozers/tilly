@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAuthContext } from './contexts/AuthContext.js';
 import { useEvents } from './hooks/useEvents.js';
 import { useChat } from './hooks/useChat.js';
@@ -11,7 +10,7 @@ import { AuthModal } from './components/Auth/AuthModal.js';
  */
 export default function App(): JSX.Element {
   const { user, isLoading: authLoading, isAuthenticated } = useAuthContext();
-  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, refetch } = useEvents();
+  const { events, isLoading: eventsLoading } = useEvents();
   const { messages, isLoading: chatLoading, sendMessage } = useChat();
 
   // Show auth modal if not authenticated

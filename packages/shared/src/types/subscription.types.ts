@@ -68,3 +68,44 @@ export interface SyncResult {
   eventsDeleted: number;
   error?: string;
 }
+
+/**
+ * Calendar feed token for sharing calendar via iCal URL
+ */
+export interface CalendarFeedToken {
+  id: number;
+  userId: string;
+  token: string;
+  name: string;
+  isActive: boolean;
+  includePrivate: boolean;
+  lastAccessedAt?: Date;
+  accessCount: number;
+  createdAt: Date;
+  expiresAt?: Date;
+}
+
+/**
+ * Database row for calendar feed token
+ */
+export interface CalendarFeedTokenRow {
+  id: number;
+  user_id: string;
+  token: string;
+  name: string;
+  is_active: boolean;
+  include_private: boolean;
+  last_accessed_at?: string;
+  access_count: number;
+  created_at: string;
+  expires_at?: string;
+}
+
+/**
+ * DTO for creating a feed token
+ */
+export interface CreateFeedTokenDto {
+  name: string;
+  includePrivate?: boolean;
+  expiresInDays?: number;
+}

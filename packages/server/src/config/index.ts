@@ -76,6 +76,25 @@ export const config = {
 
   // Debug
   debug: optionalBool('DEBUG', false),
+
+  // WebSocket
+  websocket: {
+    enabled: optionalBool('WEBSOCKET_ENABLED', true),
+    heartbeatIntervalMs: optionalNumber('WS_HEARTBEAT_MS', 30000), // 30 seconds
+    maxConnections: optionalNumber('WS_MAX_CONNECTIONS', 1000),
+  },
+
+  // AI Tool Loop
+  toolLoop: {
+    maxIterations: optionalNumber('TOOL_LOOP_MAX_ITERATIONS', 10),
+    timeoutMs: optionalNumber('TOOL_LOOP_TIMEOUT_MS', 60000), // 60 seconds
+  },
+
+  // Calendar Sync
+  sync: {
+    enabled: optionalBool('SYNC_ENABLED', true),
+    intervalMs: optionalNumber('SYNC_INTERVAL_MS', 5 * 60 * 1000), // 5 minutes
+  },
 } as const;
 
 export type Config = typeof config;

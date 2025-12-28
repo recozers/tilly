@@ -232,6 +232,91 @@ export class EventRepository extends BaseRepository<EventRow, Event> {
   }
 
   /**
+   * Find an event by its source UID
+   */
+  async findBySourceUid(uid: string, userId: string): Promise<Event | null> {
+    const { data, error } = await this.supabase
+      .from(this.tableName)
+      .select('*')
+      .eq('user_id', userId)
+      .eq('source_event_uid', uid)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return null; // Not found
+      }
+      this.logger.error({ error, uid, userId }, 'Error finding event by source UID');
+      throw error;
+    }
+
+    return this.mapToEntity(data as EventRow);
+  }
+
+  /**
+   * Get events from a specific source calendar
+   */
+  async getBySourceCalendar(sourceCalendarId: number, userId: string): Promise<Event[]> {
+    const { data, error } = await this.supabase
+      .from(this.tableName)
+      .select('*')
+      .eq('user_id', userId)
+      .eq('source_calendar_id', sourceCalendarId);
+
+    if (error) {
+      this.logger.error({ error, sourceCalendarId, userId }, 'Error getting events by source calendar');
+      throw error;
+    }
+
+    return (data as EventRow[]).map(row => this.mapToEntity(row));
+  }
+
+  /**
+   * Create an event with source information (for iCal import)
+   */
+  async createWithSource(
+    dto: CreateEventDto,
+    userId: string,
+    source: {
+      sourceCalendarId?: number;
+      sourceEventUid?: string;
+      rrule?: string;
+      allDay?: boolean;
+    }
+  ): Promise<Event> {
+    const startDate = dto.start instanceof Date ? dto.start : new Date(dto.start);
+    const endDate = dto.end instanceof Date ? dto.end : new Date(dto.end);
+
+    const insertData = {
+      title: dto.title,
+      start_time: startDate.toISOString(),
+      end_time: endDate.toISOString(),
+      color: dto.color || getRandomEventColor(),
+      description: dto.description,
+      location: dto.location,
+      user_id: userId,
+      source_calendar_id: source.sourceCalendarId,
+      source_event_uid: source.sourceEventUid,
+      rrule: source.rrule,
+      all_day: source.allDay,
+    };
+
+    const { data, error } = await this.supabase
+      .from(this.tableName)
+      .insert([insertData])
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error({ error, userId }, 'Error creating event with source');
+      throw error;
+    }
+
+    this.logger.info({ eventId: data.id, title: dto.title }, 'Event created with source');
+    return this.mapToEntity(data as EventRow);
+  }
+
+  /**
    * Upsert events from external calendar
    */
   async upsertFromSubscription(

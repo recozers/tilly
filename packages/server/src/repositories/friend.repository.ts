@@ -1,24 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import type { FriendWithProfile, FriendRequest, FriendStatus, UserProfile } from '@tilly/shared';
+import type { FriendWithProfile, FriendRequest, FriendStatus } from '@tilly/shared';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('FriendRepository');
-
-interface FriendshipRow {
-  id: string;
-  user_id: string;
-  friend_id: string;
-  status: FriendStatus;
-  created_at: string;
-}
-
-interface FriendRequestRow {
-  id: string;
-  sender_id: string;
-  receiver_id: string;
-  status: FriendStatus;
-  created_at: string;
-}
 
 /**
  * Friend repository for friend relationships

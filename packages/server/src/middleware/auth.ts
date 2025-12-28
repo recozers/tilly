@@ -76,21 +76,3 @@ export async function authenticate(
     res.status(401).json({ error: 'Authentication failed' });
   }
 }
-
-/**
- * Optional authentication - attaches user info if token is present, but doesn't require it
- */
-export async function optionalAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader?.startsWith('Bearer ')) {
-    return next();
-  }
-
-  // If token is present, validate it
-  return authenticate(req, res, next);
-}

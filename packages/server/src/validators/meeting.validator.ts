@@ -17,15 +17,6 @@ export const createMeetingRequestSchema = z.object({
   proposedTimes: z.array(proposedTimeSchema).min(1).max(10),
 });
 
-export const respondMeetingRequestSchema = z.object({
-  status: z.enum(['accepted', 'declined']),
-  selectedTime: proposedTimeSchema.optional(),
-});
-
-export const meetingRequestIdSchema = z.object({
-  id: z.string().uuid(),
-});
-
 // AI tool schemas
 export const requestMeetingWithFriendSchema = z.object({
   friend_name: z.string().min(1),
@@ -38,6 +29,3 @@ export const requestMeetingWithFriendSchema = z.object({
   })).min(1),
 });
 
-export type CreateMeetingRequestInput = z.infer<typeof createMeetingRequestSchema>;
-export type RespondMeetingRequestInput = z.infer<typeof respondMeetingRequestSchema>;
-export type RequestMeetingWithFriendInput = z.infer<typeof requestMeetingWithFriendSchema>;

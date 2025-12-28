@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { EventService } from '../services/event.service.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error-handler.js';

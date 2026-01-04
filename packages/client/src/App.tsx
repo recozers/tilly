@@ -1,17 +1,63 @@
+import { useState, useCallback } from 'react';
 import { useAuthContext } from './contexts/AuthContext.js';
 import { useEvents } from './hooks/useEvents.js';
-import { useChat } from './hooks/useChat.js';
 import { AuthModal } from './components/Auth/AuthModal.js';
+import { Calendar } from './components/Calendar/index.js';
+import { Chat } from './components/Chat/index.js';
+import { EventModal } from './components/EventModal/index.js';
+import type { TypedEvent, CreateEventDto, UpdateEventDto } from '@tilly/shared';
 
 /**
- * Main App component
- * Note: This is a minimal implementation - the full component splitting
- * from the original App.jsx will be done in subsequent updates
+ * Main App component - Tilly Calendar Application
  */
 export default function App(): JSX.Element {
-  const { user, isLoading: authLoading, isAuthenticated } = useAuthContext();
-  const { events, isLoading: eventsLoading } = useEvents();
-  const { messages, isLoading: chatLoading, sendMessage } = useChat();
+  const { user, isLoading: authLoading, isAuthenticated, signOut } = useAuthContext();
+  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, refetch } = useEvents();
+
+  // Modal state
+  const [selectedEvent, setSelectedEvent] = useState<TypedEvent | null>(null);
+  const [newEventDate, setNewEventDate] = useState<Date | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Handle event click from calendar
+  const handleEventClick = useCallback((event: TypedEvent) => {
+    setSelectedEvent(event);
+    setNewEventDate(null);
+    setIsModalOpen(true);
+  }, []);
+
+  // Handle time slot click from calendar (create new event)
+  const handleTimeSlotClick = useCallback((date: Date) => {
+    setSelectedEvent(null);
+    setNewEventDate(date);
+    setIsModalOpen(true);
+  }, []);
+
+  // Handle save event (create or update)
+  const handleSaveEvent = useCallback(async (data: CreateEventDto | UpdateEventDto) => {
+    if (selectedEvent) {
+      await updateEvent(selectedEvent.id, data as UpdateEventDto);
+    } else {
+      await createEvent(data as CreateEventDto);
+    }
+  }, [selectedEvent, createEvent, updateEvent]);
+
+  // Handle delete event
+  const handleDeleteEvent = useCallback(async (id: number) => {
+    await deleteEvent(id);
+  }, [deleteEvent]);
+
+  // Close modal
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    setSelectedEvent(null);
+    setNewEventDate(null);
+  }, []);
+
+  // Refresh events when chat creates new ones
+  const handleEventCreated = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
   // Show auth modal if not authenticated
   if (!authLoading && !isAuthenticated) {
@@ -31,43 +77,46 @@ export default function App(): JSX.Element {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1>Tilly</h1>
-        <p>Welcome, {user?.email}</p>
+        <div className="header-left">
+          <h1 className="app-logo">
+            <span className="logo-icon">🌱</span>
+            Tilly
+          </h1>
+        </div>
+        <div className="header-right">
+          <span className="user-email">{user?.email}</span>
+          <button className="btn-new-event" onClick={() => handleTimeSlotClick(new Date())}>
+            + New Event
+          </button>
+          <button className="btn-logout" onClick={signOut}>
+            Sign Out
+          </button>
+        </div>
       </header>
 
       <main className="app-main">
         <section className="calendar-section">
-          <h2>Your Calendar</h2>
-          <p>Events: {events.length}</p>
-          {/* Calendar component will be added here */}
+          <Calendar
+            events={events}
+            onEventClick={handleEventClick}
+            onTimeSlotClick={handleTimeSlotClick}
+          />
         </section>
 
-        <section className="chat-section">
-          <h2>Chat with Tilly</h2>
-          <div className="messages">
-            {messages.map(msg => (
-              <div key={msg.id} className={`message ${msg.role}`}>
-                <p>{msg.content}</p>
-              </div>
-            ))}
-          </div>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const input = e.currentTarget.querySelector('input');
-              if (input?.value) {
-                await sendMessage(input.value);
-                input.value = '';
-              }
-            }}
-          >
-            <input type="text" placeholder="Ask Tilly..." disabled={chatLoading} />
-            <button type="submit" disabled={chatLoading}>
-              {chatLoading ? 'Thinking...' : 'Send'}
-            </button>
-          </form>
-        </section>
+        <aside className="chat-section">
+          <Chat onEventCreated={handleEventCreated} />
+        </aside>
       </main>
+
+      {isModalOpen && (
+        <EventModal
+          event={selectedEvent}
+          initialDate={newEventDate}
+          onSave={handleSaveEvent}
+          onDelete={selectedEvent ? handleDeleteEvent : undefined}
+          onClose={handleCloseModal}
+        />
+      )}
     </div>
   );
 }

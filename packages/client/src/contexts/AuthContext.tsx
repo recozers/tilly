@@ -1,10 +1,14 @@
 import { createContext, useContext, ReactNode } from 'react';
-import { useAuth } from '../hooks/useAuth.js';
-import type { User, Session } from '@supabase/supabase-js';
+import { useConvexAuth } from 'convex/react';
+import { useAuthActions } from '@convex-dev/auth/react';
+
+interface User {
+  id: string;
+  email?: string;
+}
 
 interface AuthContextValue {
   user: User | null;
-  session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -20,11 +24,37 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
-  const auth = useAuth();
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const { signIn, signOut } = useAuthActions();
+
+  const handleSignIn = async (email: string, password: string) => {
+    await signIn('password', { email, password, flow: 'signIn' });
+  };
+
+  const handleSignUp = async (email: string, password: string) => {
+    await signIn('password', { email, password, flow: 'signUp' });
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  const handleSignInWithGoogle = async () => {
+    await signIn('google');
+  };
+
+  // For Convex Auth, user info comes from the identity
+  // We'll need to fetch it separately or get it from the auth state
+  const user: User | null = isAuthenticated ? { id: 'authenticated', email: undefined } : null;
 
   const value: AuthContextValue = {
-    ...auth,
-    isAuthenticated: !!auth.user,
+    user,
+    isLoading,
+    isAuthenticated,
+    signIn: handleSignIn,
+    signUp: handleSignUp,
+    signOut: handleSignOut,
+    signInWithGoogle: handleSignInWithGoogle,
   };
 
   return (

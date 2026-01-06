@@ -1,25 +1,21 @@
 {
   "name": "tilly",
   "description": "Tilly - AI-powered calendar application with natural language event creation",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "workspaces": [
     "packages/shared",
-    "packages/server",
     "packages/client"
   ],
   "engines": {
-    "node": "22.x",
-    "npm": ">=8.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "npm run build -w @tilly/shared && npm run build -w @tilly/server && npm run build -w @tilly/client",
-    "dev": "concurrently \"npm run dev -w @tilly/server\" \"npm run dev -w @tilly/client\"",
-    "dev:server": "npm run dev -w @tilly/server",
+    "dev": "concurrently \"npx convex dev\" \"npm run dev -w @tilly/client\"",
     "dev:client": "npm run dev -w @tilly/client",
-    "start": "npm run start -w @tilly/server",
-    "test": "npm run test -w @tilly/server",
-    "test:coverage": "npm run test:coverage -w @tilly/server",
+    "dev:convex": "npx convex dev",
+    "build": "npm run build -w @tilly/shared && npm run build -w @tilly/client",
+    "deploy": "npx convex deploy",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo"
@@ -27,5 +23,11 @@
   "devDependencies": {
     "concurrently": "^9.1.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@auth/core": "^0.37.4",
+    "@convex-dev/auth": "^0.0.90",
+    "convex": "^1.31.2",
+    "ical.js": "^2.2.1"
   }
 }

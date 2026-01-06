@@ -1,66 +1,99 @@
-import { useState, useEffect, useCallback } from 'react';
-import { eventsApi } from '../api/events.api.js';
-import type { Event, CreateEventDto, UpdateEventDto, TypedEvent } from '@tilly/shared';
+import { useCallback } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '../../../../convex/_generated/api';
+import type { Id } from '../../../../convex/_generated/dataModel';
+
+interface Event {
+  _id: Id<"events">;
+  title: string;
+  startTime: number;
+  endTime: number;
+  color: string;
+  description?: string;
+  location?: string;
+  type: 'event';
+}
+
+interface CreateEventDto {
+  title: string;
+  startTime: number;
+  endTime: number;
+  color?: string;
+  description?: string;
+  location?: string;
+}
+
+interface UpdateEventDto {
+  title?: string;
+  startTime?: number;
+  endTime?: number;
+  color?: string;
+  description?: string;
+  location?: string;
+}
 
 interface UseEventsReturn {
-  events: TypedEvent[];
+  events: Event[];
   isLoading: boolean;
   error: Error | null;
-  createEvent: (dto: CreateEventDto) => Promise<Event>;
-  updateEvent: (id: number, dto: UpdateEventDto) => Promise<Event>;
-  deleteEvent: (id: number) => Promise<void>;
-  refetch: () => Promise<void>;
+  createEvent: (dto: CreateEventDto) => Promise<any>;
+  updateEvent: (id: Id<"events">, dto: UpdateEventDto) => Promise<any>;
+  deleteEvent: (id: Id<"events">) => Promise<void>;
+  refetch: () => void;
 }
 
 /**
- * Hook for managing calendar events
+ * Hook for managing calendar events with Convex
+ * Events automatically update in real-time!
  */
 export function useEvents(): UseEventsReturn {
-  const [events, setEvents] = useState<TypedEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  // Real-time query - automatically updates when data changes
+  const eventsData = useQuery(api.events.queries.list, {});
 
-  const fetchEvents = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const data = await eventsApi.getAll();
-      setEvents(data);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Failed to fetch events'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Mutations
+  const createMutation = useMutation(api.events.mutations.create);
+  const updateMutation = useMutation(api.events.mutations.update);
+  const deleteMutation = useMutation(api.events.mutations.remove);
 
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+  const events: Event[] = (eventsData ?? []).map(e => ({
+    ...e,
+    type: 'event' as const,
+  }));
 
-  const createEvent = useCallback(async (dto: CreateEventDto): Promise<Event> => {
-    const event = await eventsApi.create(dto);
-    setEvents(prev => [...prev, { ...event, type: 'event' }]);
-    return event;
-  }, []);
+  const createEvent = useCallback(async (dto: CreateEventDto) => {
+    return await createMutation({
+      title: dto.title,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      color: dto.color,
+      description: dto.description,
+      location: dto.location,
+    });
+  }, [createMutation]);
 
-  const updateEvent = useCallback(async (id: number, dto: UpdateEventDto): Promise<Event> => {
-    const event = await eventsApi.update(id, dto);
-    setEvents(prev => prev.map(e => (e.id === id ? { ...event, type: e.type } : e)));
-    return event;
-  }, []);
+  const updateEvent = useCallback(async (id: Id<"events">, dto: UpdateEventDto) => {
+    return await updateMutation({
+      id,
+      ...dto,
+    });
+  }, [updateMutation]);
 
-  const deleteEvent = useCallback(async (id: number): Promise<void> => {
-    await eventsApi.delete(id);
-    setEvents(prev => prev.filter(e => e.id !== id));
+  const deleteEvent = useCallback(async (id: Id<"events">) => {
+    await deleteMutation({ id });
+  }, [deleteMutation]);
+
+  // No need to manually refetch - Convex handles real-time updates
+  const refetch = useCallback(() => {
+    // No-op - Convex automatically keeps data in sync
   }, []);
 
   return {
     events,
-    isLoading,
-    error,
+    isLoading: eventsData === undefined,
+    error: null, // Convex handles errors differently
     createEvent,
     updateEvent,
     deleteEvent,
-    refetch: fetchEvents,
+    refetch,
   };
 }

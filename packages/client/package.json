@@ -1,6 +1,6 @@
 {
   "name": "@tilly/client",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,11 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/auth-helpers-react": "^0.5.0",
-    "@supabase/auth-ui-react": "^0.4.7",
-    "@supabase/auth-ui-shared": "^0.1.8",
-    "@supabase/supabase-js": "^2.50.0",
+    "@convex-dev/auth": "^0.0.90",
     "@tilly/shared": "*",
+    "convex": "^1.31.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

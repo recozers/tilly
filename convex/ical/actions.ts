@@ -1,8 +1,5 @@
-"use node";
-
 import { httpAction } from "../_generated/server";
 import { api, internal } from "../_generated/api";
-import { Id } from "../_generated/dataModel";
 
 interface ParsedEvent {
   uid: string;
@@ -16,58 +13,178 @@ interface ParsedEvent {
 }
 
 /**
+ * Parse iCal date string to Date object
+ */
+function parseICalDate(dateStr: string): { date: Date; isAllDay: boolean } {
+  const cleanStr = dateStr.replace(/^TZID=[^:]+:/, "");
+
+  if (/^\d{8}$/.test(cleanStr)) {
+    const year = parseInt(cleanStr.slice(0, 4));
+    const month = parseInt(cleanStr.slice(4, 6)) - 1;
+    const day = parseInt(cleanStr.slice(6, 8));
+    return { date: new Date(year, month, day), isAllDay: true };
+  }
+
+  const match = cleanStr.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/);
+  if (match) {
+    const [, year, month, day, hour, min, sec, isUtc] = match;
+    if (isUtc) {
+      return {
+        date: new Date(Date.UTC(
+          parseInt(year),
+          parseInt(month) - 1,
+          parseInt(day),
+          parseInt(hour),
+          parseInt(min),
+          parseInt(sec)
+        )),
+        isAllDay: false,
+      };
+    }
+    return {
+      date: new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(min),
+        parseInt(sec)
+      ),
+      isAllDay: false,
+    };
+  }
+
+  return { date: new Date(dateStr), isAllDay: false };
+}
+
+/**
+ * Unfold iCal lines
+ */
+function unfoldIcalLines(icalData: string): string[] {
+  return icalData
+    .replace(/\r\n[ \t]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim());
+}
+
+/**
  * Parse iCal data into events
  */
-async function parseICalData(icalData: string): Promise<ParsedEvent[]> {
-  const ICAL = await import("ical.js");
+function parseICalData(icalData: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
+  const lines = unfoldIcalLines(icalData);
 
-  const jcalData = ICAL.default.parse(icalData);
-  const comp = new ICAL.default.Component(jcalData);
-  const vevents = comp.getAllSubcomponents("vevent");
+  let currentEvent: Partial<ParsedEvent> & { isAllDay?: boolean } | null = null;
 
-  for (const vevent of vevents) {
-    const event = new ICAL.default.Event(vevent);
-
-    const startDate = event.startDate?.toJSDate();
-    const endDate = event.endDate?.toJSDate();
-
-    if (!startDate) continue;
-
-    const isAllDay = event.startDate?.isDate || false;
-    const calculatedEnd =
-      endDate ||
-      (isAllDay
-        ? new Date(startDate.getTime() + 24 * 60 * 60 * 1000)
-        : new Date(startDate.getTime() + 60 * 60 * 1000));
-
-    let rrule: string | undefined;
-    const rruleProp = vevent.getFirstProperty("rrule");
-    if (rruleProp) {
-      rrule = rruleProp.toICALString();
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") {
+      currentEvent = {};
+      continue;
     }
 
-    events.push({
-      uid:
-        event.uid ||
-        `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      title: event.summary || "Untitled Event",
-      start: startDate,
-      end: calculatedEnd,
-      description: event.description,
-      location: event.location,
-      rrule,
-      allDay: isAllDay,
-    });
+    if (line === "END:VEVENT" && currentEvent) {
+      if (currentEvent.start) {
+        const event: ParsedEvent = {
+          uid:
+            currentEvent.uid ||
+            `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          title: currentEvent.title || "Untitled Event",
+          start: currentEvent.start,
+          end:
+            currentEvent.end ||
+            (currentEvent.isAllDay
+              ? new Date(currentEvent.start.getTime() + 24 * 60 * 60 * 1000)
+              : new Date(currentEvent.start.getTime() + 60 * 60 * 1000)),
+          description: currentEvent.description,
+          location: currentEvent.location,
+          rrule: currentEvent.rrule,
+          allDay: currentEvent.isAllDay,
+        };
+        events.push(event);
+      }
+      currentEvent = null;
+      continue;
+    }
+
+    if (!currentEvent) continue;
+
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+
+    const propPart = line.slice(0, colonIndex);
+    const value = line.slice(colonIndex + 1);
+    const propName = propPart.split(";")[0].toUpperCase();
+
+    switch (propName) {
+      case "UID":
+        currentEvent.uid = value;
+        break;
+      case "SUMMARY":
+        currentEvent.title = value;
+        break;
+      case "DESCRIPTION":
+        currentEvent.description = value.replace(/\\n/g, "\n").replace(/\\,/g, ",");
+        break;
+      case "LOCATION":
+        currentEvent.location = value.replace(/\\,/g, ",");
+        break;
+      case "DTSTART": {
+        const { date, isAllDay } = parseICalDate(value);
+        currentEvent.start = date;
+        currentEvent.isAllDay = isAllDay;
+        break;
+      }
+      case "DTEND": {
+        const { date } = parseICalDate(value);
+        currentEvent.end = date;
+        break;
+      }
+      case "RRULE":
+        currentEvent.rrule = value;
+        break;
+    }
   }
 
   return events;
 }
 
 /**
+ * Format date for iCal
+ */
+function formatICalDate(date: Date, isAllDay: boolean = false): string {
+  if (isAllDay) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}${month}${day}`;
+  }
+
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const min = String(date.getUTCMinutes()).padStart(2, "0");
+  const sec = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${year}${month}${day}T${hour}${min}${sec}Z`;
+}
+
+/**
+ * Escape iCal text
+ */
+function escapeICalText(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+}
+
+/**
  * Generate iCal data from events
  */
-async function generateICalData(
+function generateICalData(
   events: Array<{
     _id: string;
     title: string;
@@ -79,56 +196,42 @@ async function generateICalData(
     rrule?: string;
     allDay?: boolean;
   }>
-): Promise<string> {
-  const ICAL = await import("ical.js");
-
-  const cal = new ICAL.default.Component(["vcalendar", [], []]);
-  cal.updatePropertyWithValue("version", "2.0");
-  cal.updatePropertyWithValue("prodid", "-//Tilly//Calendar//EN");
-  cal.updatePropertyWithValue("calscale", "GREGORIAN");
-  cal.updatePropertyWithValue("method", "PUBLISH");
-  cal.updatePropertyWithValue("x-wr-calname", "Tilly Calendar");
+): string {
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Tilly//Calendar//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "X-WR-CALNAME:Tilly Calendar",
+  ];
 
   for (const event of events) {
-    const vevent = new ICAL.default.Component("vevent");
-
     const uid = event.sourceEventUid || `tilly-${event._id}@tilly.app`;
-    vevent.updatePropertyWithValue("uid", uid);
+    const isAllDay = event.allDay || false;
 
-    const dtstart = ICAL.default.Time.fromJSDate(
-      new Date(event.startTime),
-      true
-    );
-    const dtend = ICAL.default.Time.fromJSDate(new Date(event.endTime), true);
-
-    if (event.allDay) {
-      dtstart.isDate = true;
-      dtend.isDate = true;
-    }
-
-    vevent.updatePropertyWithValue("dtstart", dtstart);
-    vevent.updatePropertyWithValue("dtend", dtend);
-    vevent.updatePropertyWithValue("summary", event.title);
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${formatICalDate(new Date())}`);
+    lines.push(`DTSTART${isAllDay ? ";VALUE=DATE" : ""}:${formatICalDate(new Date(event.startTime), isAllDay)}`);
+    lines.push(`DTEND${isAllDay ? ";VALUE=DATE" : ""}:${formatICalDate(new Date(event.endTime), isAllDay)}`);
+    lines.push(`SUMMARY:${escapeICalText(event.title)}`);
 
     if (event.description) {
-      vevent.updatePropertyWithValue("description", event.description);
+      lines.push(`DESCRIPTION:${escapeICalText(event.description)}`);
     }
     if (event.location) {
-      vevent.updatePropertyWithValue("location", event.location);
+      lines.push(`LOCATION:${escapeICalText(event.location)}`);
     }
-
     if (event.rrule) {
-      const rruleProp = ICAL.default.Property.fromString(event.rrule);
-      vevent.addProperty(rruleProp);
+      lines.push(`RRULE:${event.rrule}`);
     }
 
-    const now = ICAL.default.Time.fromJSDate(new Date(), true);
-    vevent.updatePropertyWithValue("dtstamp", now);
-
-    cal.addSubcomponent(vevent);
+    lines.push("END:VEVENT");
   }
 
-  return cal.toString();
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
 }
 
 /**
@@ -170,7 +273,7 @@ export const importIcal = httpAction(async (ctx, request) => {
       });
     }
 
-    const parsedEvents = await parseICalData(icalData);
+    const parsedEvents = parseICalData(icalData);
 
     const result = await ctx.runMutation(api.events.mutations.importBatch, {
       events: parsedEvents.map((e) => ({
@@ -226,7 +329,7 @@ export const exportIcal = httpAction(async (ctx, request) => {
       endTime: endTime ? new Date(endTime).getTime() : undefined,
     });
 
-    const icalData = await generateICalData(events);
+    const icalData = generateICalData(events);
 
     return new Response(icalData, {
       headers: {
@@ -270,7 +373,7 @@ export const publicFeed = httpAction(async (ctx, request) => {
     // Get user's events
     const events = await ctx.runQuery(api.events.queries.listForExport, {});
 
-    const icalData = await generateICalData(events);
+    const icalData = generateICalData(events);
 
     return new Response(icalData, {
       headers: {

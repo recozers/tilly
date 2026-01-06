@@ -1,6 +1,4 @@
-"use node";
-
-import { httpAction } from "../_generated/server";
+import { httpAction, ActionCtx } from "../_generated/server";
 import { api } from "../_generated/api";
 import { CALENDAR_TOOLS, ToolCall, ToolName } from "./tools";
 import { Id } from "../_generated/dataModel";
@@ -102,12 +100,12 @@ Guidelines:
  * Execute a tool call
  */
 async function executeTool(
-  ctx: any,
+  ctx: ActionCtx,
   toolName: ToolName,
   args: Record<string, unknown>,
   userId: Id<"users">,
   timezone: string
-): Promise<{ data: unknown; event?: any }> {
+): Promise<{ data: unknown; event?: unknown }> {
   switch (toolName) {
     case "get_calendar_events": {
       const startDate = args.start_date
@@ -122,9 +120,10 @@ async function executeTool(
         endTime: endDate,
       });
 
+      type EventType = { _id: Id<"events">; title: string; startTime: number; endTime: number; description?: string };
       return {
         data: {
-          events: events.map((e: any) => ({
+          events: events.map((e: EventType) => ({
             id: e._id,
             title: e.title,
             start: formatDate(e.startTime, timezone),
@@ -145,6 +144,10 @@ async function executeTool(
         endTime,
         description: args.description as string | undefined,
       });
+
+      if (!event) {
+        throw new Error("Failed to create event");
+      }
 
       return {
         data: {
@@ -198,10 +201,11 @@ async function executeTool(
         excludeEventId: args.exclude_event_id as Id<"events"> | undefined,
       });
 
+      type ConflictType = { _id: Id<"events">; title: string; startTime: number; endTime: number };
       return {
         data: {
           hasConflicts: result.hasConflicts,
-          conflicts: result.conflicts.map((e: any) => ({
+          conflicts: result.conflicts.map((e: ConflictType) => ({
             id: e._id,
             title: e.title,
             start: formatDate(e.startTime, timezone),
@@ -222,9 +226,10 @@ async function executeTool(
     case "get_friends_list": {
       const friends = await ctx.runQuery(api.friends.queries.list, {});
 
+      type FriendType = { friendId: Id<"users">; name?: string; email?: string };
       return {
         data: {
-          friends: friends.map((f: any) => ({
+          friends: friends.map((f: FriendType) => ({
             id: f.friendId,
             name: f.name,
             email: f.email,
@@ -297,7 +302,7 @@ export const streamChat = httpAction(async (ctx, request) => {
       // Build messages
       const messages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
-        ...chatHistory.map((m: any) => ({
+        ...chatHistory.map((m: { role: string; content: string }) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
         })),
@@ -307,6 +312,11 @@ export const streamChat = httpAction(async (ctx, request) => {
       const maxIterations = 10;
       let iteration = 0;
       let hasMoreToolCalls = true;
+
+      const openaiApiKey = process.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        throw new Error("OPENAI_API_KEY not configured");
+      }
 
       // Tool loop
       while (hasMoreToolCalls && iteration < maxIterations) {
@@ -323,7 +333,7 @@ export const streamChat = httpAction(async (ctx, request) => {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              Authorization: `Bearer ${openaiApiKey}`,
             },
             body: JSON.stringify({
               model: process.env.OPENAI_MODEL || "gpt-4o",

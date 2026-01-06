@@ -1,7 +1,6 @@
-"use node";
-
 import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
+import { v } from "convex/values";
 
 interface ParsedICalEvent {
   uid: string;
@@ -15,54 +14,148 @@ interface ParsedICalEvent {
 }
 
 /**
- * Parse iCal data using ical.js
- * Note: This runs in Node.js runtime due to "use node" directive
+ * Parse iCal date string to Date object
+ * Handles: YYYYMMDD, YYYYMMDDTHHmmss, YYYYMMDDTHHmmssZ
  */
-async function parseICalData(icalData: string): Promise<ParsedICalEvent[]> {
-  // Dynamic import since ical.js is a Node module
-  const ICAL = await import("ical.js");
+function parseICalDate(dateStr: string): { date: Date; isAllDay: boolean } {
+  // Remove any TZID prefix
+  const cleanStr = dateStr.replace(/^TZID=[^:]+:/, "");
+
+  // Check if it's an all-day event (no time component)
+  if (/^\d{8}$/.test(cleanStr)) {
+    const year = parseInt(cleanStr.slice(0, 4));
+    const month = parseInt(cleanStr.slice(4, 6)) - 1;
+    const day = parseInt(cleanStr.slice(6, 8));
+    return { date: new Date(year, month, day), isAllDay: true };
+  }
+
+  // Parse datetime format: YYYYMMDDTHHmmss or YYYYMMDDTHHmmssZ
+  const match = cleanStr.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/);
+  if (match) {
+    const [, year, month, day, hour, min, sec, isUtc] = match;
+    if (isUtc) {
+      return {
+        date: new Date(Date.UTC(
+          parseInt(year),
+          parseInt(month) - 1,
+          parseInt(day),
+          parseInt(hour),
+          parseInt(min),
+          parseInt(sec)
+        )),
+        isAllDay: false,
+      };
+    }
+    return {
+      date: new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(min),
+        parseInt(sec)
+      ),
+      isAllDay: false,
+    };
+  }
+
+  // Fallback - try Date.parse
+  return { date: new Date(dateStr), isAllDay: false };
+}
+
+/**
+ * Unfold iCal lines (lines starting with space/tab are continuations)
+ */
+function unfoldIcalLines(icalData: string): string[] {
+  return icalData
+    .replace(/\r\n[ \t]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim());
+}
+
+/**
+ * Parse iCal data without external library
+ * This is a simple parser that handles common cases
+ */
+function parseICalData(icalData: string): ParsedICalEvent[] {
   const events: ParsedICalEvent[] = [];
+  const lines = unfoldIcalLines(icalData);
 
-  const jcalData = ICAL.default.parse(icalData);
-  const comp = new ICAL.default.Component(jcalData);
-  const vevents = comp.getAllSubcomponents("vevent");
+  let currentEvent: Partial<ParsedICalEvent> & { isAllDay?: boolean } | null = null;
 
-  for (const vevent of vevents) {
-    const event = new ICAL.default.Event(vevent);
-
-    const startDate = event.startDate?.toJSDate();
-    const endDate = event.endDate?.toJSDate();
-
-    if (!startDate) {
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") {
+      currentEvent = {};
       continue;
     }
 
-    const isAllDay = event.startDate?.isDate || false;
-
-    const calculatedEnd =
-      endDate ||
-      (isAllDay
-        ? new Date(startDate.getTime() + 24 * 60 * 60 * 1000)
-        : new Date(startDate.getTime() + 60 * 60 * 1000));
-
-    let rrule: string | undefined;
-    const rruleProp = vevent.getFirstProperty("rrule");
-    if (rruleProp) {
-      rrule = rruleProp.toICALString();
+    if (line === "END:VEVENT" && currentEvent) {
+      // Validate required fields
+      if (currentEvent.start) {
+        const event: ParsedICalEvent = {
+          uid:
+            currentEvent.uid ||
+            `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          title: currentEvent.title || "Untitled Event",
+          start: currentEvent.start,
+          end:
+            currentEvent.end ||
+            (currentEvent.isAllDay
+              ? new Date(currentEvent.start.getTime() + 24 * 60 * 60 * 1000)
+              : new Date(currentEvent.start.getTime() + 60 * 60 * 1000)),
+          description: currentEvent.description,
+          location: currentEvent.location,
+          rrule: currentEvent.rrule,
+          allDay: currentEvent.isAllDay,
+        };
+        events.push(event);
+      }
+      currentEvent = null;
+      continue;
     }
 
-    events.push({
-      uid:
-        event.uid ||
-        `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      title: event.summary || "Untitled Event",
-      start: startDate,
-      end: calculatedEnd,
-      description: event.description,
-      location: event.location,
-      rrule,
-      allDay: isAllDay,
-    });
+    if (!currentEvent) continue;
+
+    // Parse property
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+
+    const propPart = line.slice(0, colonIndex);
+    const value = line.slice(colonIndex + 1);
+
+    // Get property name (before any parameters)
+    const propName = propPart.split(";")[0].toUpperCase();
+
+    switch (propName) {
+      case "UID":
+        currentEvent.uid = value;
+        break;
+      case "SUMMARY":
+        currentEvent.title = value;
+        break;
+      case "DESCRIPTION":
+        currentEvent.description = value.replace(/\\n/g, "\n").replace(/\\,/g, ",");
+        break;
+      case "LOCATION":
+        currentEvent.location = value.replace(/\\,/g, ",");
+        break;
+      case "DTSTART": {
+        const { date, isAllDay } = parseICalDate(value);
+        currentEvent.start = date;
+        currentEvent.isAllDay = isAllDay;
+        break;
+      }
+      case "DTEND": {
+        const { date } = parseICalDate(value);
+        currentEvent.end = date;
+        break;
+      }
+      case "RRULE":
+        currentEvent.rrule = value;
+        break;
+    }
   }
 
   return events;
@@ -110,7 +203,7 @@ export const runBackgroundSync = internalAction({
         }
 
         const icalData = await response.text();
-        const parsedEvents = await parseICalData(icalData);
+        const parsedEvents = parseICalData(icalData);
 
         // Upsert events
         const result = await ctx.runMutation(
@@ -182,10 +275,10 @@ export const runBackgroundSync = internalAction({
  */
 export const syncOne = internalAction({
   args: {
-    subscriptionId: internal.subscriptions.mutations.updateSyncStatus.args.id,
+    subscriptionId: v.id("calendarSubscriptions"),
   },
-  handler: async (ctx, args) => {
-    const sub = await ctx.runQuery(internal.subscriptions.queries.getById, {
+  handler: async (ctx, args): Promise<{ success: boolean; eventsAdded?: number; eventsUpdated?: number; eventsDeleted?: number; error?: string }> => {
+    const sub = await ctx.runQuery(internal.subscriptions.queries.getByIdInternal, {
       id: args.subscriptionId,
     });
 
@@ -205,7 +298,7 @@ export const syncOne = internalAction({
       }
 
       const icalData = await response.text();
-      const parsedEvents = await parseICalData(icalData);
+      const parsedEvents = parseICalData(icalData);
 
       const result = await ctx.runMutation(
         internal.events.mutations.upsertFromSubscription,

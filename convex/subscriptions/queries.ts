@@ -64,3 +64,13 @@ export const getDueForSync = internalQuery({
     });
   },
 });
+
+/**
+ * Get a subscription by ID (internal - no auth check)
+ */
+export const getByIdInternal = internalQuery({
+  args: { id: v.id("calendarSubscriptions") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});

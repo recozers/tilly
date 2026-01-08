@@ -50,9 +50,9 @@ http.route({
   handler: exportIcal,
 });
 
-// Public feed (no auth required)
+// Public feed (no auth required) - uses pathPrefix for dynamic token
 http.route({
-  path: "/feed/{token}",
+  pathPrefix: "/feed/",
   method: "GET",
   handler: publicFeed,
 });

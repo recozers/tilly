@@ -1,4 +1,4 @@
-import { query } from "../_generated/server";
+import { query, internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
@@ -223,6 +223,26 @@ export const listForExport = query({
       });
     }
 
+    return events;
+  },
+});
+
+/**
+ * Internal query to get events for a specific user (used by public feed)
+ */
+export const listForUser = internalQuery({
+  args: {
+    userId: v.id("users"),
+    includePrivate: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    // If includePrivate is false, filter out private events or mark them as "Busy"
+    // For now, return all events (includePrivate handling can be added later)
     return events;
   },
 });

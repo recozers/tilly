@@ -469,8 +469,11 @@ export const publicFeed = httpAction(async (ctx, request) => {
       return new Response("Invalid or expired token", { status: 404 });
     }
 
-    // Get user's events
-    const events = await ctx.runQuery(api.events.queries.listForExport, {});
+    // Get user's events using internal query (no auth required)
+    const events = await ctx.runQuery(internal.events.queries.listForUser, {
+      userId: feedToken.userId,
+      includePrivate: feedToken.includePrivate,
+    });
 
     // Compute ETag from events data for cache validation
     const etag = computeETag(events);

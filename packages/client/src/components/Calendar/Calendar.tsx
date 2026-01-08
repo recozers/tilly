@@ -1,16 +1,48 @@
-import { useMemo, useState } from 'react';
-import type { TypedEvent, EventWithLayout } from '@tilly/shared';
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { EventCard } from './EventCard.js';
 import { CalendarHeader } from './CalendarHeader.js';
 import './Calendar.css';
 
-interface CalendarProps {
-  events: TypedEvent[];
-  onEventClick?: (event: TypedEvent) => void;
-  onTimeSlotClick?: (date: Date) => void;
+// Convex event type
+interface CalendarEvent {
+  _id: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  color: string;
+  description?: string;
+  location?: string;
+  allDay?: boolean;
+  isRecurringInstance?: boolean;
+  type: 'event';
 }
 
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
+interface EventWithLayout extends CalendarEvent {
+  width: number;
+  left: number;
+  zIndex: number;
+}
+
+interface CalendarProps {
+  events: CalendarEvent[];
+  onEventClick?: (event: CalendarEvent) => void;
+  onTimeSlotClick?: (date: Date) => void;
+  onEventDrop?: (eventId: string, newStartTime: number, newEndTime: number) => void;
+}
+
+// Drag state tracking
+interface DragState {
+  eventId: string;
+  originalEventId?: string;
+  startY: number;
+  startDayIndex: number;
+  originalStartTime: number;
+  originalEndTime: number;
+  duration: number;
+}
+
+// Full 24-hour view with scrolling
+const HOURS_IN_DAY = 24;
 const DAYS_IN_WEEK = 7;
 const HOUR_HEIGHT = 60; // pixels per hour
 
@@ -38,37 +70,55 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 function formatHour(hour: number): string {
-  if (hour === 0) return '12 AM';
+  if (hour === 0 || hour === 24) return '12 AM';
   if (hour === 12) return '12 PM';
   if (hour < 12) return `${hour} AM`;
   return `${hour - 12} PM`;
 }
 
-function calculateEventLayout(events: TypedEvent[], dayStart: Date): EventWithLayout[] {
+function getAllDayEvents(events: CalendarEvent[], dayStart: Date): CalendarEvent[] {
+  return events.filter(e => {
+    if (!e.allDay) return false;
+    const eventStart = new Date(e.startTime);
+    const eventEnd = new Date(e.endTime);
+
+    // Normalize to date-only comparisons (ignore time)
+    const eventStartDate = new Date(eventStart.getFullYear(), eventStart.getMonth(), eventStart.getDate());
+    const eventEndDate = new Date(eventEnd.getFullYear(), eventEnd.getMonth(), eventEnd.getDate());
+    const dayDate = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate());
+
+    // Check if the day falls within the event's date range (inclusive)
+    return dayDate >= eventStartDate && dayDate <= eventEndDate;
+  });
+}
+
+function calculateEventLayout(events: CalendarEvent[], dayStart: Date): EventWithLayout[] {
+  // Filter out all-day events - they're shown separately
   const dayEvents = events.filter(e => {
-    const start = new Date(e.start);
+    if (e.allDay) return false;
+    const start = new Date(e.startTime);
     return isSameDay(start, dayStart);
   });
 
   // Sort by start time, then by duration (longer first)
   dayEvents.sort((a, b) => {
-    const startDiff = new Date(a.start).getTime() - new Date(b.start).getTime();
+    const startDiff = a.startTime - b.startTime;
     if (startDiff !== 0) return startDiff;
-    const aDuration = new Date(a.end).getTime() - new Date(a.start).getTime();
-    const bDuration = new Date(b.end).getTime() - new Date(b.start).getTime();
+    const aDuration = a.endTime - a.startTime;
+    const bDuration = b.endTime - b.startTime;
     return bDuration - aDuration;
   });
 
-  const columns: TypedEvent[][] = [];
+  const columns: CalendarEvent[][] = [];
 
   for (const event of dayEvents) {
-    const eventStart = new Date(event.start).getTime();
+    const eventStart = event.startTime;
 
     // Find first column where this event fits
     let placed = false;
     for (let i = 0; i < columns.length; i++) {
       const lastInColumn = columns[i][columns[i].length - 1];
-      const lastEnd = new Date(lastInColumn.end).getTime();
+      const lastEnd = lastInColumn.endTime;
       if (eventStart >= lastEnd) {
         columns[i].push(event);
         placed = true;
@@ -99,8 +149,16 @@ function calculateEventLayout(events: TypedEvent[], dayStart: Date): EventWithLa
   return result;
 }
 
-export function Calendar({ events, onEventClick, onTimeSlotClick }: CalendarProps): JSX.Element {
+export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }: CalendarProps): JSX.Element {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const hasScrolledRef = useRef(false);
+
+  // Drag-and-drop state
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ dayIndex: number; top: number } | null>(null);
+  const dayBodiesRef = useRef<HTMLDivElement>(null);
 
   const weekStart = useMemo(() => getStartOfWeek(currentDate), [currentDate]);
 
@@ -112,6 +170,53 @@ export function Calendar({ events, onEventClick, onTimeSlotClick }: CalendarProp
     return weekDays.map(day => calculateEventLayout(events, day));
   }, [events, weekDays]);
 
+  const allDayEventsByDay = useMemo(() => {
+    return weekDays.map(day => getAllDayEvents(events, day));
+  }, [events, weekDays]);
+
+  // Check if there are any all-day events this week
+  const hasAllDayEvents = allDayEventsByDay.some(dayEvents => dayEvents.length > 0);
+  const maxAllDayEvents = Math.max(...allDayEventsByDay.map(dayEvents => dayEvents.length), 0);
+
+  // All 24 hours
+  const hoursToShow = useMemo(() => {
+    return Array.from({ length: HOURS_IN_DAY }, (_, i) => i);
+  }, []);
+
+  // Update current time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Scroll to current time on mount
+  const scrollToCurrentTime = useCallback(() => {
+    if (scrollContainerRef.current) {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinutes = now.getMinutes();
+
+      // Calculate scroll position to center current time in view
+      const scrollPosition = (currentHour * HOUR_HEIGHT) + (currentMinutes * HOUR_HEIGHT / 60);
+      const containerHeight = scrollContainerRef.current.clientHeight;
+      const targetScroll = Math.max(0, scrollPosition - containerHeight / 3);
+
+      scrollContainerRef.current.scrollTo({
+        top: targetScroll,
+        behavior: hasScrolledRef.current ? 'smooth' : 'auto'
+      });
+      hasScrolledRef.current = true;
+    }
+  }, []);
+
+  // Scroll to current time on initial load
+  useEffect(() => {
+    const timer = setTimeout(scrollToCurrentTime, 100);
+    return () => clearTimeout(timer);
+  }, [scrollToCurrentTime]);
+
   const handlePrevWeek = () => {
     setCurrentDate(prev => addDays(prev, -7));
   };
@@ -122,6 +227,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick }: CalendarProp
 
   const handleToday = () => {
     setCurrentDate(new Date());
+    setTimeout(scrollToCurrentTime, 50);
   };
 
   const handleTimeSlotClick = (dayIndex: number, hour: number) => {
@@ -132,7 +238,150 @@ export function Calendar({ events, onEventClick, onTimeSlotClick }: CalendarProp
     }
   };
 
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if not in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handlePrevWeek();
+      } else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleNextWeek();
+      } else if (e.key === 't' && !e.metaKey && !e.ctrlKey) {
+        // Press 't' to go to today (like Google Calendar)
+        handleToday();
+      } else if (e.key === 'Escape' && dragState) {
+        // Cancel drag on Escape
+        setDragState(null);
+        setDragPreview(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dragState]);
+
+  // Drag-and-drop handlers
+  const handleDragStart = useCallback((
+    e: React.MouseEvent,
+    event: CalendarEvent,
+    dayIndex: number
+  ) => {
+    // Don't start drag if clicking on recurring instance (edit original instead)
+    // Or if no drop handler provided
+    if (!onEventDrop) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = dayBodiesRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const duration = event.endTime - event.startTime;
+
+    setDragState({
+      eventId: event._id,
+      originalEventId: (event as CalendarEvent & { originalEventId?: string }).originalEventId,
+      startY: e.clientY,
+      startDayIndex: dayIndex,
+      originalStartTime: event.startTime,
+      originalEndTime: event.endTime,
+      duration,
+    });
+
+    // Calculate initial preview position
+    const start = new Date(event.startTime);
+    const startMinutes = start.getHours() * 60 + start.getMinutes();
+    const top = (startMinutes / 60) * HOUR_HEIGHT;
+    setDragPreview({ dayIndex, top });
+  }, [onEventDrop]);
+
+  const handleDragMove = useCallback((e: MouseEvent) => {
+    if (!dragState || !dayBodiesRef.current) return;
+
+    const rect = dayBodiesRef.current.getBoundingClientRect();
+    const dayWidth = rect.width / DAYS_IN_WEEK;
+
+    // Calculate which day column we're over
+    const relativeX = e.clientX - rect.left;
+    const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
+
+    // Calculate vertical position (with snapping to 15-min intervals)
+    const scrollTop = scrollContainerRef.current?.scrollTop || 0;
+    const relativeY = e.clientY - rect.top + scrollTop;
+    const rawMinutes = (relativeY / HOUR_HEIGHT) * 60;
+    const snappedMinutes = Math.round(rawMinutes / 15) * 15; // Snap to 15-min
+    const top = (snappedMinutes / 60) * HOUR_HEIGHT;
+
+    // Clamp to valid range
+    const maxTop = (24 * 60 - dragState.duration / 60000) / 60 * HOUR_HEIGHT;
+    const clampedTop = Math.max(0, Math.min(maxTop, top));
+
+    setDragPreview({ dayIndex, top: clampedTop });
+  }, [dragState]);
+
+  const handleDragEnd = useCallback((_e: MouseEvent) => {
+    if (!dragState || !dragPreview || !onEventDrop || !dayBodiesRef.current) {
+      setDragState(null);
+      setDragPreview(null);
+      return;
+    }
+
+    // Calculate new times
+    const newDay = weekDays[dragPreview.dayIndex];
+    const newMinutes = (dragPreview.top / HOUR_HEIGHT) * 60;
+    const newHours = Math.floor(newMinutes / 60);
+    const newMins = Math.round(newMinutes % 60);
+
+    const newStart = new Date(newDay);
+    newStart.setHours(newHours, newMins, 0, 0);
+    const newStartTime = newStart.getTime();
+    const newEndTime = newStartTime + dragState.duration;
+
+    // Only update if actually moved
+    if (newStartTime !== dragState.originalStartTime) {
+      // Use original event ID for recurring instances
+      const idToUpdate = dragState.originalEventId || dragState.eventId;
+      onEventDrop(idToUpdate, newStartTime, newEndTime);
+    }
+
+    setDragState(null);
+    setDragPreview(null);
+  }, [dragState, dragPreview, onEventDrop, weekDays]);
+
+  // Global mouse event listeners for dragging
+  useEffect(() => {
+    if (!dragState) return;
+
+    window.addEventListener('mousemove', handleDragMove);
+    window.addEventListener('mouseup', handleDragEnd);
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [dragState, handleDragMove, handleDragEnd]);
+
   const today = new Date();
+
+  // Calculate current time indicator position in pixels
+  const currentTimePosition = useMemo(() => {
+    const hours = currentTime.getHours();
+    const minutes = currentTime.getMinutes();
+    return (hours * HOUR_HEIGHT) + (minutes * HOUR_HEIGHT / 60);
+  }, [currentTime]);
+
+  // Find which day column is today
+  const todayColumnIndex = weekDays.findIndex(day => isSameDay(day, today));
 
   return (
     <div className="calendar">
@@ -143,69 +392,165 @@ export function Calendar({ events, onEventClick, onTimeSlotClick }: CalendarProp
         onToday={handleToday}
       />
 
-      <div className="calendar-grid">
-        {/* Time column */}
-        <div className="calendar-time-column">
-          <div className="calendar-corner" />
-          {HOURS.map(hour => (
-            <div key={hour} className="calendar-time-slot">
-              <span className="calendar-time-label">{formatHour(hour)}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Day columns */}
-        {weekDays.map((day, dayIndex) => {
-          const isToday = isSameDay(day, today);
-          return (
-            <div key={dayIndex} className="calendar-day-column">
-              <div className={`calendar-day-header ${isToday ? 'today' : ''}`}>
-                <span className="calendar-day-name">
-                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
-                </span>
-                <span className={`calendar-day-number ${isToday ? 'today' : ''}`}>
-                  {day.getDate()}
-                </span>
+      <div className="calendar-grid-wrapper" ref={scrollContainerRef}>
+        <div className="calendar-grid">
+          {/* Time column */}
+          <div className="calendar-time-column">
+            <div className="calendar-time-header" />
+            {hasAllDayEvents && (
+              <div
+                className="calendar-time-allday"
+                style={{ minHeight: `${Math.max(maxAllDayEvents * 26 + 4, 30)}px` }}
+              >
+                <span className="calendar-time-allday-label">All day</span>
               </div>
-              <div className="calendar-day-body">
-                {HOURS.map(hour => (
-                  <div
-                    key={hour}
-                    className="calendar-hour-slot"
-                    onClick={() => handleTimeSlotClick(dayIndex, hour)}
-                  />
-                ))}
-                {/* Events overlay */}
-                <div className="calendar-events-container">
-                  {eventsByDay[dayIndex].map(event => {
-                    const start = new Date(event.start);
-                    const end = new Date(event.end);
-                    const startMinutes = start.getHours() * 60 + start.getMinutes();
-                    const endMinutes = end.getHours() * 60 + end.getMinutes();
-                    const duration = Math.max(endMinutes - startMinutes, 30);
-                    const top = (startMinutes / 60) * HOUR_HEIGHT;
-                    const height = (duration / 60) * HOUR_HEIGHT;
-
-                    return (
-                      <EventCard
-                        key={event.id}
-                        event={event}
-                        style={{
-                          top: `${top}px`,
-                          height: `${Math.max(height, 24)}px`,
-                          left: `${event.left}%`,
-                          width: `calc(${event.width}% - 4px)`,
-                          zIndex: event.zIndex,
-                        }}
-                        onClick={() => onEventClick?.(event)}
-                      />
-                    );
-                  })}
+            )}
+            <div className="calendar-time-slots">
+              {hoursToShow.map(hour => (
+                <div key={hour} className="calendar-time-slot">
+                  <span className="calendar-time-label">{formatHour(hour)}</span>
                 </div>
+              ))}
+              {/* End label for the last hour boundary */}
+              <div className="calendar-time-slot calendar-time-slot-end">
+                <span className="calendar-time-label">{formatHour(hoursToShow[hoursToShow.length - 1] + 1)}</span>
               </div>
             </div>
-          );
-        })}
+          </div>
+
+          {/* Day columns */}
+          <div className="calendar-days-container">
+            {/* Day headers row */}
+            <div className="calendar-day-headers">
+              {weekDays.map((day, dayIndex) => {
+                const isToday = isSameDay(day, today);
+                return (
+                  <div key={dayIndex} className={`calendar-day-header ${isToday ? 'today' : ''}`}>
+                    <span className="calendar-day-name">
+                      {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                    </span>
+                    <span className={`calendar-day-number ${isToday ? 'today' : ''}`}>
+                      {day.getDate()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* All-day events row */}
+            {hasAllDayEvents && (
+              <div className="calendar-allday-row">
+                {weekDays.map((day, dayIndex) => {
+                  const isToday = isSameDay(day, today);
+                  const dayAllDayEvents = allDayEventsByDay[dayIndex];
+                  return (
+                    <div
+                      key={dayIndex}
+                      className={`calendar-allday-cell ${isToday ? 'is-today' : ''}`}
+                      style={{ minHeight: `${Math.max(maxAllDayEvents * 26 + 4, 30)}px` }}
+                    >
+                      {dayAllDayEvents.map((event, eventIndex) => (
+                        <div
+                          key={event._id}
+                          className="calendar-allday-event"
+                          style={{
+                            backgroundColor: event.color,
+                            top: `${eventIndex * 26 + 2}px`
+                          }}
+                          onClick={() => onEventClick?.(event)}
+                        >
+                          <span className="calendar-allday-event-title">{event.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Day bodies container - with current time indicator */}
+            <div className="calendar-day-bodies" ref={dayBodiesRef}>
+              {/* Current time indicator (spans all days) */}
+              {todayColumnIndex !== -1 && (
+                <div
+                  className="calendar-current-time-line"
+                  style={{ top: `${currentTimePosition}px` }}
+                >
+                  <div
+                    className="calendar-current-time-dot"
+                    style={{ left: `calc(${(todayColumnIndex / DAYS_IN_WEEK) * 100}% + ${100 / DAYS_IN_WEEK / 2}%)` }}
+                  />
+                </div>
+              )}
+
+              {weekDays.map((day, dayIndex) => {
+                const isToday = isSameDay(day, today);
+                return (
+                  <div key={dayIndex} className={`calendar-day-body ${isToday ? 'is-today' : ''}`}>
+                    {hoursToShow.map(hour => (
+                      <div
+                        key={hour}
+                        className={`calendar-hour-slot ${hour === currentTime.getHours() && isToday ? 'current-hour' : ''}`}
+                        onClick={() => handleTimeSlotClick(dayIndex, hour)}
+                      />
+                    ))}
+                    {/* Events overlay */}
+                    <div className="calendar-events-container">
+                      {eventsByDay[dayIndex].map(event => {
+                        const start = new Date(event.startTime);
+                        const end = new Date(event.endTime);
+                        const startMinutes = start.getHours() * 60 + start.getMinutes();
+                        const endMinutes = end.getHours() * 60 + end.getMinutes();
+                        const duration = Math.max(endMinutes - startMinutes, 30);
+                        // Pixel-based positioning
+                        const top = (startMinutes / 60) * HOUR_HEIGHT;
+                        const height = (duration / 60) * HOUR_HEIGHT;
+                        const isDragging = dragState?.eventId === event._id;
+
+                        return (
+                          <EventCard
+                            key={event._id}
+                            event={event}
+                            style={{
+                              top: `${top}px`,
+                              height: `${Math.max(height, 24)}px`,
+                              left: `${event.left}%`,
+                              width: `calc(${event.width}% - 4px)`,
+                              zIndex: isDragging ? 1000 : event.zIndex,
+                              opacity: isDragging ? 0.5 : 1,
+                              cursor: onEventDrop ? 'grab' : 'pointer',
+                            }}
+                            onClick={() => !dragState && onEventClick?.(event)}
+                            onMouseDown={(e) => handleDragStart(e, event, dayIndex)}
+                          />
+                        );
+                      })}
+
+                      {/* Drag preview ghost */}
+                      {dragState && dragPreview && dragPreview.dayIndex === dayIndex && (
+                        <div
+                          className="event-card event-card-drag-preview"
+                          style={{
+                            top: `${dragPreview.top}px`,
+                            height: `${(dragState.duration / 60000 / 60) * HOUR_HEIGHT}px`,
+                            left: '0',
+                            width: 'calc(100% - 4px)',
+                            zIndex: 999,
+                            backgroundColor: events.find(e => e._id === dragState.eventId)?.color || '#4A7C2A',
+                          }}
+                        >
+                          <div className="event-card-title">
+                            {events.find(e => e._id === dragState.eventId)?.title}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

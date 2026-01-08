@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useWebSocketChat } from '../../hooks/useWebSocketChat.js';
+import { useChat } from '../../hooks/useChat.js';
 import { ChatMessage } from './ChatMessage.js';
 import { ToolCallIndicator } from './ToolCallIndicator.js';
 import './Chat.css';
@@ -11,15 +11,17 @@ interface ChatProps {
 export function Chat({ onEventCreated }: ChatProps): JSX.Element {
   const {
     messages,
-    isConnected,
-    isStreaming,
-    currentToolCall,
-    loopIteration,
+    isLoading,
     error,
     sendMessage,
     clearHistory,
-    connect,
-  } = useWebSocketChat();
+  } = useChat();
+
+  // With fetch-based streaming, we're always "connected"
+  const isConnected = true;
+  const isStreaming = isLoading || messages.some(m => m.isStreaming);
+  const currentToolCall = null; // Tool calls are handled differently now
+  const loopIteration = 0;
 
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -105,11 +107,6 @@ export function Chat({ onEventCreated }: ChatProps): JSX.Element {
           <div className="chat-error">
             <span className="error-icon">⚠️</span>
             <span>{error.message}</span>
-            {!isConnected && (
-              <button className="retry-btn" onClick={connect}>
-                Reconnect
-              </button>
-            )}
           </div>
         )}
 

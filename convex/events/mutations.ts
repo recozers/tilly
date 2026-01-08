@@ -1,7 +1,6 @@
 import { mutation, internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { Id } from "../_generated/dataModel";
 
 // Calendar colors
 const CALENDAR_COLORS = ["#4A7C2A", "#F4F1E8"] as const;
@@ -21,6 +20,9 @@ export const create = mutation({
     color: v.optional(v.string()),
     description: v.optional(v.string()),
     location: v.optional(v.string()),
+    allDay: v.optional(v.boolean()),
+    timezone: v.optional(v.string()),
+    reminders: v.optional(v.array(v.number())),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -36,6 +38,9 @@ export const create = mutation({
       color: args.color ?? getRandomEventColor(),
       description: args.description,
       location: args.location,
+      allDay: args.allDay,
+      timezone: args.timezone,
+      reminders: args.reminders,
     });
 
     return await ctx.db.get(eventId);
@@ -54,6 +59,9 @@ export const update = mutation({
     color: v.optional(v.string()),
     description: v.optional(v.string()),
     location: v.optional(v.string()),
+    allDay: v.optional(v.boolean()),
+    timezone: v.optional(v.string()),
+    reminders: v.optional(v.array(v.number())),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -73,14 +81,29 @@ export const update = mutation({
       color: string;
       description: string;
       location: string;
+      allDay: boolean;
+      timezone: string;
+      reminders: number[];
+      remindersSent: number[];
     }> = {};
 
     if (args.title !== undefined) updates.title = args.title;
-    if (args.startTime !== undefined) updates.startTime = args.startTime;
+    if (args.startTime !== undefined) {
+      updates.startTime = args.startTime;
+      // Reset sent reminders when start time changes
+      updates.remindersSent = [];
+    }
     if (args.endTime !== undefined) updates.endTime = args.endTime;
     if (args.color !== undefined) updates.color = args.color;
     if (args.description !== undefined) updates.description = args.description;
     if (args.location !== undefined) updates.location = args.location;
+    if (args.allDay !== undefined) updates.allDay = args.allDay;
+    if (args.timezone !== undefined) updates.timezone = args.timezone;
+    if (args.reminders !== undefined) {
+      updates.reminders = args.reminders;
+      // Reset sent reminders when reminders change
+      updates.remindersSent = [];
+    }
 
     await ctx.db.patch(args.id, updates);
     return await ctx.db.get(args.id);

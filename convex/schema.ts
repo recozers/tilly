@@ -14,6 +14,7 @@ export default defineSchema({
     color: v.string(),
     description: v.optional(v.string()),
     location: v.optional(v.string()),
+    timezone: v.optional(v.string()), // IANA timezone (e.g., "America/New_York")
     sourceCalendarId: v.optional(v.id("calendarSubscriptions")),
     sourceEventUid: v.optional(v.string()),
     rrule: v.optional(v.string()),
@@ -21,6 +22,10 @@ export default defineSchema({
     duration: v.optional(v.number()),
     allDay: v.optional(v.boolean()),
     meetingRequestId: v.optional(v.id("meetingRequests")),
+    // Reminders: array of minutes before event to remind (e.g., [15, 60] = 15min and 1hr before)
+    reminders: v.optional(v.array(v.number())),
+    // Track which reminders have been sent
+    remindersSent: v.optional(v.array(v.number())),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_time", ["userId", "startTime"])
@@ -43,6 +48,7 @@ export default defineSchema({
     lastSyncError: v.optional(v.string()),
     etag: v.optional(v.string()),
     lastModified: v.optional(v.string()),
+    visible: v.optional(v.boolean()), // Show/hide calendar events (defaults to true)
   })
     .index("by_user", ["userId"])
     .index("by_auto_sync", ["autoSync", "lastSyncAt"]),

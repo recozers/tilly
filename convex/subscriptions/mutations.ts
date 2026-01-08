@@ -1,6 +1,7 @@
-import { mutation, internalMutation } from "../_generated/server";
+import { mutation, internalMutation, action } from "../_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { internal } from "../_generated/api";
 
 /**
  * Create a new calendar subscription
@@ -37,6 +38,7 @@ export const create = mutation({
       color: args.color,
       autoSync: args.autoSync ?? true,
       syncIntervalMinutes: args.syncIntervalMinutes ?? 60,
+      visible: true, // Default to visible
     });
 
     return await ctx.db.get(subscriptionId);
@@ -53,6 +55,7 @@ export const update = mutation({
     color: v.optional(v.string()),
     autoSync: v.optional(v.boolean()),
     syncIntervalMinutes: v.optional(v.number()),
+    visible: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -70,6 +73,7 @@ export const update = mutation({
       color: string;
       autoSync: boolean;
       syncIntervalMinutes: number;
+      visible: boolean;
     }> = {};
 
     if (args.name !== undefined) updates.name = args.name;
@@ -77,6 +81,7 @@ export const update = mutation({
     if (args.autoSync !== undefined) updates.autoSync = args.autoSync;
     if (args.syncIntervalMinutes !== undefined)
       updates.syncIntervalMinutes = args.syncIntervalMinutes;
+    if (args.visible !== undefined) updates.visible = args.visible;
 
     await ctx.db.patch(args.id, updates);
     return await ctx.db.get(args.id);
@@ -149,5 +154,26 @@ export const updateSyncStatus = internalMutation({
     }
 
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+/**
+ * Manually trigger sync for a subscription
+ * This allows users to force an immediate refresh instead of waiting for the cron
+ */
+export const triggerSync = action({
+  args: { id: v.id("calendarSubscriptions") },
+  handler: async (ctx, args): Promise<{ success: boolean; eventsAdded?: number; eventsUpdated?: number; eventsDeleted?: number; error?: string }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Trigger the sync action
+    const result = await ctx.runAction(internal.subscriptions.sync.syncOne, {
+      subscriptionId: args.id,
+    });
+
+    return result;
   },
 });

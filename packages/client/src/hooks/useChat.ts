@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useAuthToken } from '@convex-dev/auth/react';
 
 interface Message {
   id: string;
@@ -24,6 +25,7 @@ export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const authToken = useAuthToken();
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
@@ -67,17 +69,21 @@ export function useChat(): UseChatReturn {
       const siteUrl = convexUrl.replace('.cloud', '.site');
 
       // Stream from Convex HTTP action
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch(`${siteUrl}/api/ai/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           message: content,
           chatHistory,
           timezone,
         }),
-        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -141,7 +147,7 @@ export function useChat(): UseChatReturn {
     } finally {
       setIsLoading(false);
     }
-  }, [messages]);
+  }, [messages, authToken]);
 
   const clearHistory = useCallback(() => {
     setMessages([]);

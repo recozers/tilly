@@ -28,16 +28,31 @@ export function CalendarHeader({
   return (
     <div className="calendar-header">
       <div className="calendar-nav">
-        <button className="calendar-nav-btn" onClick={onPrevWeek} aria-label="Previous week">
+        <button
+          className="calendar-nav-btn"
+          onClick={onPrevWeek}
+          aria-label="Previous week"
+          title="Previous week (Ctrl/Cmd + Left)"
+        >
           ‹
         </button>
-        <button className="calendar-nav-btn" onClick={onNextWeek} aria-label="Next week">
+        <button
+          className="calendar-nav-btn"
+          onClick={onNextWeek}
+          aria-label="Next week"
+          title="Next week (Ctrl/Cmd + Right)"
+        >
           ›
         </button>
-        <button className="calendar-today-btn" onClick={onToday}>
+        <button
+          className="calendar-today-btn"
+          onClick={onToday}
+          title="Go to today (T)"
+        >
           Today
         </button>
       </div>
+
       <h2 className="calendar-title">{formatWeekRange(weekStart)}</h2>
     </div>
   );

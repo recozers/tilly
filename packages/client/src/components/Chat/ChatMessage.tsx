@@ -1,10 +1,15 @@
-import type { Event } from '@tilly/shared';
-
 interface ToolCall {
   id: string;
   name: string;
   status: 'pending' | 'executing' | 'success' | 'error';
   result?: unknown;
+}
+
+interface ChatEvent {
+  _id: string;
+  title: string;
+  startTime: number;
+  endTime: number;
 }
 
 interface Message {
@@ -13,7 +18,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
-  events?: Event[];
+  events?: ChatEvent[];
   toolCalls?: ToolCall[];
 }
 
@@ -73,18 +78,18 @@ export function ChatMessage({ message }: ChatMessageProps): JSX.Element {
         {message.events && message.events.length > 0 && (
           <div className="message-events">
             {message.events.map((event) => (
-              <div key={event.id} className="created-event">
+              <div key={event._id} className="created-event">
                 <span className="event-icon">📅</span>
                 <div className="event-details">
                   <span className="event-title">{event.title}</span>
                   <span className="event-time">
-                    {new Date(event.start).toLocaleDateString('en-US', {
+                    {new Date(event.startTime).toLocaleDateString('en-US', {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',
                     })}
                     {' at '}
-                    {new Date(event.start).toLocaleTimeString('en-US', {
+                    {new Date(event.startTime).toLocaleTimeString('en-US', {
                       hour: 'numeric',
                       minute: '2-digit',
                       hour12: true,

@@ -7,10 +7,10 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "outDir": "./dist",
-    "rootDir": "./src",
-    "noEmit": true
+    "noEmit": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../../convex/**/*"],
   "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "../shared" }

@@ -1,6 +1,83 @@
 import { useState, useEffect } from 'react';
-import type { TypedEvent, CreateEventDto, UpdateEventDto } from '@tilly/shared';
 import './EventModal.css';
+
+// Convex event type
+interface CalendarEvent {
+  _id: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  color: string;
+  description?: string;
+  location?: string;
+  allDay?: boolean;
+  timezone?: string;
+  reminders?: number[];
+  type: 'event';
+}
+
+interface CreateEventData {
+  title: string;
+  startTime: number;
+  endTime: number;
+  color?: string;
+  description?: string;
+  location?: string;
+  allDay?: boolean;
+  timezone?: string;
+  reminders?: number[];
+}
+
+interface UpdateEventData {
+  title?: string;
+  startTime?: number;
+  endTime?: number;
+  color?: string;
+  description?: string;
+  location?: string;
+  allDay?: boolean;
+  timezone?: string;
+  reminders?: number[];
+}
+
+// Common reminder options (in minutes before event)
+const REMINDER_OPTIONS = [
+  { value: 0, label: 'At time of event' },
+  { value: 5, label: '5 minutes before' },
+  { value: 15, label: '15 minutes before' },
+  { value: 30, label: '30 minutes before' },
+  { value: 60, label: '1 hour before' },
+  { value: 120, label: '2 hours before' },
+  { value: 1440, label: '1 day before' },
+  { value: 10080, label: '1 week before' },
+];
+
+// Common timezone options
+const TIMEZONE_OPTIONS = [
+  { value: 'America/New_York', label: 'Eastern Time (ET)' },
+  { value: 'America/Chicago', label: 'Central Time (CT)' },
+  { value: 'America/Denver', label: 'Mountain Time (MT)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (PT)' },
+  { value: 'America/Anchorage', label: 'Alaska Time' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii Time' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'Europe/London', label: 'London (GMT/BST)' },
+  { value: 'Europe/Paris', label: 'Paris (CET/CEST)' },
+  { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+  { value: 'Asia/Shanghai', label: 'Shanghai (CST)' },
+  { value: 'Asia/Kolkata', label: 'India (IST)' },
+  { value: 'Australia/Sydney', label: 'Sydney (AEST/AEDT)' },
+];
+
+// Get user's local timezone
+function getLocalTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return 'America/New_York';
+  }
+}
 
 const COLOR_OPTIONS = [
   { value: '#4A7C2A', label: 'Green' },
@@ -14,10 +91,10 @@ const COLOR_OPTIONS = [
 ];
 
 interface EventModalProps {
-  event?: TypedEvent | null;
+  event?: CalendarEvent | null;
   initialDate?: Date | null;
-  onSave: (data: CreateEventDto | UpdateEventDto) => Promise<void>;
-  onDelete?: (id: number) => Promise<void>;
+  onSave: (data: CreateEventData | UpdateEventData) => Promise<void>;
+  onDelete?: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -30,6 +107,13 @@ function formatDateTimeLocal(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+function formatDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function EventModal({
   event,
   initialDate,
@@ -40,7 +124,7 @@ export function EventModal({
   const isEditing = !!event;
 
   const getDefaultStart = () => {
-    if (event) return new Date(event.start);
+    if (event) return new Date(event.startTime);
     if (initialDate) return initialDate;
     const now = new Date();
     now.setMinutes(0, 0, 0);
@@ -49,7 +133,7 @@ export function EventModal({
   };
 
   const getDefaultEnd = () => {
-    if (event) return new Date(event.end);
+    if (event) return new Date(event.endTime);
     const start = getDefaultStart();
     const end = new Date(start);
     end.setHours(end.getHours() + 1);
@@ -57,13 +141,31 @@ export function EventModal({
   };
 
   const [title, setTitle] = useState(event?.title || '');
+  const [allDay, setAllDay] = useState(event?.allDay || false);
   const [start, setStart] = useState(formatDateTimeLocal(getDefaultStart()));
   const [end, setEnd] = useState(formatDateTimeLocal(getDefaultEnd()));
+  // For all-day events, default end date to same as start date (single day event)
+  const [startDate, setStartDate] = useState(formatDateOnly(getDefaultStart()));
+  const [endDate, setEndDate] = useState(formatDateOnly(getDefaultStart()));
   const [color, setColor] = useState(event?.color || '#4A7C2A');
   const [description, setDescription] = useState(event?.description || '');
   const [location, setLocation] = useState(event?.location || '');
+  const [timezone, setTimezone] = useState(event?.timezone || getLocalTimezone());
+  const [reminders, setReminders] = useState<number[]>(event?.reminders || [15]); // Default: 15 min before
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Add a reminder
+  const addReminder = (minutes: number) => {
+    if (!reminders.includes(minutes)) {
+      setReminders([...reminders, minutes].sort((a, b) => a - b));
+    }
+  };
+
+  // Remove a reminder
+  const removeReminder = (minutes: number) => {
+    setReminders(reminders.filter(r => r !== minutes));
+  };
 
   // Update end time when start changes (maintain 1 hour duration for new events)
   useEffect(() => {
@@ -84,24 +186,41 @@ export function EventModal({
       return;
     }
 
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    let startDateTime: Date;
+    let endDateTime: Date;
 
-    if (endDate <= startDate) {
-      setError('End time must be after start time');
-      return;
+    if (allDay) {
+      // For all-day events, use date inputs and set to midnight
+      startDateTime = new Date(startDate + 'T00:00:00');
+      endDateTime = new Date(endDate + 'T23:59:59');
+
+      if (endDateTime < startDateTime) {
+        setError('End date must be on or after start date');
+        return;
+      }
+    } else {
+      startDateTime = new Date(start);
+      endDateTime = new Date(end);
+
+      if (endDateTime <= startDateTime) {
+        setError('End time must be after start time');
+        return;
+      }
     }
 
     setIsSubmitting(true);
 
     try {
-      const data = {
+      const data: CreateEventData = {
         title: title.trim(),
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
+        startTime: startDateTime.getTime(),
+        endTime: endDateTime.getTime(),
         color,
         description: description.trim() || undefined,
         location: location.trim() || undefined,
+        allDay,
+        timezone,
+        reminders: reminders.length > 0 ? reminders : undefined,
       };
 
       await onSave(data);
@@ -122,7 +241,7 @@ export function EventModal({
 
     setIsSubmitting(true);
     try {
-      await onDelete(event.id);
+      await onDelete();
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete event');
@@ -167,28 +286,64 @@ export function EventModal({
             />
           </div>
 
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="event-start">Start</label>
+          <div className="form-group form-group-checkbox">
+            <label className="checkbox-label">
               <input
-                id="event-start"
-                type="datetime-local"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-                required
+                type="checkbox"
+                checked={allDay}
+                onChange={(e) => setAllDay(e.target.checked)}
               />
-            </div>
-            <div className="form-group">
-              <label htmlFor="event-end">End</label>
-              <input
-                id="event-end"
-                type="datetime-local"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-                required
-              />
-            </div>
+              <span>All day</span>
+            </label>
           </div>
+
+          {allDay ? (
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="event-start-date">Start Date</label>
+                <input
+                  id="event-start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="event-end-date">End Date</label>
+                <input
+                  id="event-end-date"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="event-start">Start</label>
+                <input
+                  id="event-start"
+                  type="datetime-local"
+                  value={start}
+                  onChange={(e) => setStart(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="event-end">End</label>
+                <input
+                  id="event-end"
+                  type="datetime-local"
+                  value={end}
+                  onChange={(e) => setEnd(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+          )}
 
           <div className="form-group">
             <label htmlFor="event-location">Location</label>
@@ -210,6 +365,71 @@ export function EventModal({
               placeholder="Add description"
               rows={3}
             />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="event-timezone">Timezone</label>
+            <select
+              id="event-timezone"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className="form-select"
+            >
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label}
+                </option>
+              ))}
+              {/* Show current timezone if not in list */}
+              {!TIMEZONE_OPTIONS.find(tz => tz.value === timezone) && (
+                <option value={timezone}>{timezone}</option>
+              )}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Reminders</label>
+            <div className="reminders-container">
+              {reminders.length > 0 ? (
+                <div className="reminder-chips">
+                  {reminders.map((minutes) => {
+                    const option = REMINDER_OPTIONS.find(o => o.value === minutes);
+                    return (
+                      <span key={minutes} className="reminder-chip">
+                        {option?.label || `${minutes} min before`}
+                        <button
+                          type="button"
+                          className="reminder-remove"
+                          onClick={() => removeReminder(minutes)}
+                          aria-label="Remove reminder"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span className="no-reminders">No reminders set</span>
+              )}
+              <select
+                className="reminder-add-select"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    addReminder(parseInt(e.target.value, 10));
+                    e.target.value = '';
+                  }
+                }}
+              >
+                <option value="">Add reminder...</option>
+                {REMINDER_OPTIONS.filter(opt => !reminders.includes(opt.value)).map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="form-group">

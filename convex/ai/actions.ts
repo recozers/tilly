@@ -103,7 +103,7 @@ async function executeTool(
   ctx: ActionCtx,
   toolName: ToolName,
   args: Record<string, unknown>,
-  userId: Id<"users">,
+  _userId: Id<"users">,
   timezone: string
 ): Promise<{ data: unknown; event?: unknown }> {
   switch (toolName) {
@@ -247,12 +247,19 @@ async function executeTool(
  * Streaming AI chat endpoint
  */
 export const streamChat = httpAction(async (ctx, request) => {
+  const origin = request.headers.get("Origin") || "*";
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Credentials": "true",
+  };
+
   // Get the user identity from the auth token
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...corsHeaders },
     });
   }
 
@@ -263,7 +270,7 @@ export const streamChat = httpAction(async (ctx, request) => {
   if (!message) {
     return new Response(JSON.stringify({ error: "Message required" }), {
       status: 400,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...corsHeaders },
     });
   }
 
@@ -514,7 +521,8 @@ export const streamChat = httpAction(async (ctx, request) => {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
+      ...corsHeaders,
     },
   });
 });

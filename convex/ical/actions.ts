@@ -14,15 +14,21 @@ interface ParsedEvent {
 
 /**
  * Parse iCal date string to Date object
+ *
+ * For all-day events (DATE values without time):
+ * - Use UTC midnight to avoid timezone shifting
+ * - iCal DTEND for all-day events is EXCLUSIVE (day after event ends)
  */
 function parseICalDate(dateStr: string): { date: Date; isAllDay: boolean } {
   const cleanStr = dateStr.replace(/^TZID=[^:]+:/, "");
 
+  // All-day event: YYYYMMDD format (no time component)
   if (/^\d{8}$/.test(cleanStr)) {
     const year = parseInt(cleanStr.slice(0, 4));
     const month = parseInt(cleanStr.slice(4, 6)) - 1;
     const day = parseInt(cleanStr.slice(6, 8));
-    return { date: new Date(year, month, day), isAllDay: true };
+    // Use UTC to prevent timezone shifting of all-day events
+    return { date: new Date(Date.UTC(year, month, day, 0, 0, 0)), isAllDay: true };
   }
 
   const match = cleanStr.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/);
@@ -86,17 +92,41 @@ function parseICalData(icalData: string): ParsedEvent[] {
 
     if (line === "END:VEVENT" && currentEvent) {
       if (currentEvent.start) {
+        let endDate = currentEvent.end;
+
+        if (currentEvent.isAllDay) {
+          // iCal all-day DTEND is EXCLUSIVE (the day after the event ends)
+          // For display, we want the end to be 23:59:59 of the LAST day of the event
+          if (endDate) {
+            // Subtract 1 day from DTEND, then set to end of that day
+            const lastDay = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+            endDate = new Date(Date.UTC(
+              lastDay.getUTCFullYear(),
+              lastDay.getUTCMonth(),
+              lastDay.getUTCDate(),
+              23, 59, 59, 999
+            ));
+          } else {
+            // No DTEND provided - single day event, end at 23:59:59 of start day
+            endDate = new Date(Date.UTC(
+              currentEvent.start.getUTCFullYear(),
+              currentEvent.start.getUTCMonth(),
+              currentEvent.start.getUTCDate(),
+              23, 59, 59, 999
+            ));
+          }
+        } else if (!endDate) {
+          // Non-all-day without end: default to 1 hour duration
+          endDate = new Date(currentEvent.start.getTime() + 60 * 60 * 1000);
+        }
+
         const event: ParsedEvent = {
           uid:
             currentEvent.uid ||
             `imported-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           title: currentEvent.title || "Untitled Event",
           start: currentEvent.start,
-          end:
-            currentEvent.end ||
-            (currentEvent.isAllDay
-              ? new Date(currentEvent.start.getTime() + 24 * 60 * 60 * 1000)
-              : new Date(currentEvent.start.getTime() + 60 * 60 * 1000)),
+          end: endDate,
           description: currentEvent.description,
           location: currentEvent.location,
           rrule: currentEvent.rrule,

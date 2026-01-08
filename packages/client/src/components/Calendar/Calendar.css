@@ -217,6 +217,18 @@
   text-overflow: ellipsis;
 }
 
+/* All-day event dragging styles */
+.calendar-allday-event.dragging {
+  opacity: 0.5;
+}
+
+.calendar-allday-event-preview {
+  border: 2px dashed var(--forest-600) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+  pointer-events: none;
+  animation: dragPulse 0.5s ease-in-out infinite alternate;
+}
+
 /* Days Container */
 .calendar-days-container {
   display: flex;

@@ -30,7 +30,7 @@ interface CalendarProps {
   onEventDrop?: (eventId: string, newStartTime: number, newEndTime: number) => void;
 }
 
-// Drag state tracking
+// Drag state tracking for timed events
 interface DragState {
   eventId: string;
   originalEventId?: string;
@@ -39,6 +39,15 @@ interface DragState {
   originalStartTime: number;
   originalEndTime: number;
   duration: number;
+}
+
+// Drag state for all-day events (horizontal only)
+interface AllDayDragState {
+  eventId: string;
+  originalEventId?: string;
+  startDayIndex: number;
+  originalStartTime: number;
+  originalEndTime: number;
 }
 
 // Full 24-hour view with scrolling
@@ -155,10 +164,15 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
 
-  // Drag-and-drop state
+  // Drag-and-drop state for timed events
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragPreview, setDragPreview] = useState<{ dayIndex: number; top: number } | null>(null);
   const dayBodiesRef = useRef<HTMLDivElement>(null);
+
+  // Drag-and-drop state for all-day events
+  const [allDayDragState, setAllDayDragState] = useState<AllDayDragState | null>(null);
+  const [allDayDragPreview, setAllDayDragPreview] = useState<number | null>(null); // dayIndex
+  const allDayRowRef = useRef<HTMLDivElement>(null);
 
   const weekStart = useMemo(() => getStartOfWeek(currentDate), [currentDate]);
 
@@ -255,16 +269,18 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
       } else if (e.key === 't' && !e.metaKey && !e.ctrlKey) {
         // Press 't' to go to today (like Google Calendar)
         handleToday();
-      } else if (e.key === 'Escape' && dragState) {
+      } else if (e.key === 'Escape' && (dragState || allDayDragState)) {
         // Cancel drag on Escape
         setDragState(null);
         setDragPreview(null);
+        setAllDayDragState(null);
+        setAllDayDragPreview(null);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [dragState]);
+  }, [dragState, allDayDragState]);
 
   // Drag-and-drop handlers
   const handleDragStart = useCallback((
@@ -354,7 +370,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     setDragPreview(null);
   }, [dragState, dragPreview, onEventDrop, weekDays]);
 
-  // Global mouse event listeners for dragging
+  // Global mouse event listeners for timed event dragging
   useEffect(() => {
     if (!dragState) return;
 
@@ -370,6 +386,80 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
       document.body.style.userSelect = '';
     };
   }, [dragState, handleDragMove, handleDragEnd]);
+
+  // All-day event drag handlers
+  const handleAllDayDragStart = useCallback((
+    e: React.MouseEvent,
+    event: CalendarEvent,
+    dayIndex: number
+  ) => {
+    if (!onEventDrop) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    setAllDayDragState({
+      eventId: event._id,
+      originalEventId: (event as CalendarEvent & { originalEventId?: string }).originalEventId,
+      startDayIndex: dayIndex,
+      originalStartTime: event.startTime,
+      originalEndTime: event.endTime,
+    });
+    setAllDayDragPreview(dayIndex);
+  }, [onEventDrop]);
+
+  const handleAllDayDragMove = useCallback((e: MouseEvent) => {
+    if (!allDayDragState || !allDayRowRef.current) return;
+
+    const rect = allDayRowRef.current.getBoundingClientRect();
+    const dayWidth = rect.width / DAYS_IN_WEEK;
+
+    const relativeX = e.clientX - rect.left;
+    const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
+
+    setAllDayDragPreview(dayIndex);
+  }, [allDayDragState]);
+
+  const handleAllDayDragEnd = useCallback((_e: MouseEvent) => {
+    if (!allDayDragState || allDayDragPreview === null || !onEventDrop) {
+      setAllDayDragState(null);
+      setAllDayDragPreview(null);
+      return;
+    }
+
+    // Calculate day difference
+    const dayDiff = allDayDragPreview - allDayDragState.startDayIndex;
+
+    if (dayDiff !== 0) {
+      // Shift both start and end by the same number of days
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const newStartTime = allDayDragState.originalStartTime + (dayDiff * msPerDay);
+      const newEndTime = allDayDragState.originalEndTime + (dayDiff * msPerDay);
+
+      const idToUpdate = allDayDragState.originalEventId || allDayDragState.eventId;
+      onEventDrop(idToUpdate, newStartTime, newEndTime);
+    }
+
+    setAllDayDragState(null);
+    setAllDayDragPreview(null);
+  }, [allDayDragState, allDayDragPreview, onEventDrop]);
+
+  // Global mouse event listeners for all-day dragging
+  useEffect(() => {
+    if (!allDayDragState) return;
+
+    window.addEventListener('mousemove', handleAllDayDragMove);
+    window.addEventListener('mouseup', handleAllDayDragEnd);
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      window.removeEventListener('mousemove', handleAllDayDragMove);
+      window.removeEventListener('mouseup', handleAllDayDragEnd);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [allDayDragState, handleAllDayDragMove, handleAllDayDragEnd]);
 
   const today = new Date();
 
@@ -439,29 +529,50 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
 
             {/* All-day events row */}
             {hasAllDayEvents && (
-              <div className="calendar-allday-row">
+              <div className="calendar-allday-row" ref={allDayRowRef}>
                 {weekDays.map((day, dayIndex) => {
                   const isToday = isSameDay(day, today);
                   const dayAllDayEvents = allDayEventsByDay[dayIndex];
+                  const isDragPreviewDay = allDayDragPreview === dayIndex;
                   return (
                     <div
                       key={dayIndex}
                       className={`calendar-allday-cell ${isToday ? 'is-today' : ''}`}
                       style={{ minHeight: `${Math.max(maxAllDayEvents * 26 + 4, 30)}px` }}
                     >
-                      {dayAllDayEvents.map((event, eventIndex) => (
+                      {dayAllDayEvents.map((event, eventIndex) => {
+                        const isDragging = allDayDragState?.eventId === event._id;
+                        return (
+                          <div
+                            key={event._id}
+                            className={`calendar-allday-event ${isDragging ? 'dragging' : ''}`}
+                            style={{
+                              backgroundColor: event.color,
+                              top: `${eventIndex * 26 + 2}px`,
+                              opacity: isDragging ? 0.5 : 1,
+                              cursor: onEventDrop ? 'grab' : 'pointer',
+                            }}
+                            onClick={() => !allDayDragState && onEventClick?.(event)}
+                            onMouseDown={(e) => handleAllDayDragStart(e, event, dayIndex)}
+                          >
+                            <span className="calendar-allday-event-title">{event.title}</span>
+                          </div>
+                        );
+                      })}
+                      {/* Drag preview for all-day events */}
+                      {allDayDragState && isDragPreviewDay && (
                         <div
-                          key={event._id}
-                          className="calendar-allday-event"
+                          className="calendar-allday-event calendar-allday-event-preview"
                           style={{
-                            backgroundColor: event.color,
-                            top: `${eventIndex * 26 + 2}px`
+                            backgroundColor: events.find(e => e._id === allDayDragState.eventId)?.color || '#4A7C2A',
+                            top: '2px',
                           }}
-                          onClick={() => onEventClick?.(event)}
                         >
-                          <span className="calendar-allday-event-title">{event.title}</span>
+                          <span className="calendar-allday-event-title">
+                            {events.find(e => e._id === allDayDragState.eventId)?.title}
+                          </span>
                         </div>
-                      ))}
+                      )}
                     </div>
                   );
                 })}

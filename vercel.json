@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "packages/client/dist",
   "installCommand": "npm install",
-  "framework": "vite",
+  "framework": null,
   "rewrites": [
     {
       "source": "/((?!feed|api).*)",

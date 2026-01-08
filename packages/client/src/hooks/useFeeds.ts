@@ -33,10 +33,13 @@ export function getFeedUrls(token: string): {
   webcal: string;
   googleCalendar: string;
 } {
-  // Feed endpoints are served by Convex HTTP actions, not the frontend
+  // Feed endpoints are served by Convex HTTP actions at .convex.site (not .convex.cloud)
+  // VITE_CONVEX_URL is like "https://xxx.convex.cloud" for WebSocket/API
+  // HTTP routes are served from "https://xxx.convex.site"
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
-  // Convert WebSocket URL to HTTP URL (wss://xxx.convex.cloud -> https://xxx.convex.cloud)
-  const baseUrl = convexUrl.replace(/^wss?:/, 'https:');
+  const baseUrl = convexUrl
+    .replace(/^wss?:/, 'https:')
+    .replace('.convex.cloud', '.convex.site');
   const feedPath = `/feed/${token}`;
 
   const httpsUrl = `${baseUrl}${feedPath}`;

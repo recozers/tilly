@@ -93,7 +93,8 @@ Guidelines:
 4. When moving events, confirm the new time with the user.
 5. Always format times in a human-readable way.
 6. You can use multiple tools in sequence to complete complex tasks.
-7. If a task requires multiple steps, complete all steps before responding to the user.`;
+7. If a task requires multiple steps, complete all steps before responding to the user.
+8. For all-day events (birthdays, holidays, deadlines without specific times), set all_day: true and use date-only format (YYYY-MM-DD) for start and end times. For single-day events, use the same date for both.`;
 }
 
 /**
@@ -135,14 +136,34 @@ async function executeTool(
     }
 
     case "create_event": {
-      const startTime = new Date(args.start_time as string).getTime();
-      const endTime = new Date(args.end_time as string).getTime();
+      const isAllDay = args.all_day === true;
+      let startTime: number;
+      let endTime: number;
+
+      if (isAllDay) {
+        // For all-day events, use UTC midnight to prevent timezone shifting
+        const startDateStr = args.start_time as string;
+        const endDateStr = args.end_time as string;
+
+        // Parse date-only format (YYYY-MM-DD)
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+
+        // Start at 00:00:00 UTC
+        startTime = Date.UTC(startYear, startMonth - 1, startDay, 0, 0, 0);
+        // End at 23:59:59 UTC of the end date
+        endTime = Date.UTC(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+      } else {
+        startTime = new Date(args.start_time as string).getTime();
+        endTime = new Date(args.end_time as string).getTime();
+      }
 
       const event = await ctx.runMutation(api.events.mutations.create, {
         title: args.title as string,
         startTime,
         endTime,
         description: args.description as string | undefined,
+        allDay: isAllDay,
       });
 
       if (!event) {

@@ -28,7 +28,7 @@ export const CALENDAR_TOOLS = [
     type: "function" as const,
     function: {
       name: "create_event",
-      description: "Create a new calendar event. Always check for conflicts first.",
+      description: "Create a new calendar event. Always check for conflicts first. For all-day events, set all_day to true and use date-only format (YYYY-MM-DD) for start and end times.",
       parameters: {
         type: "object",
         properties: {
@@ -36,16 +36,20 @@ export const CALENDAR_TOOLS = [
           start_time: {
             type: "string",
             description:
-              "Start time in local timezone format (YYYY-MM-DDTHH:MM:SS)",
+              "Start time in local timezone format (YYYY-MM-DDTHH:MM:SS) or date-only (YYYY-MM-DD) for all-day events",
           },
           end_time: {
             type: "string",
             description:
-              "End time in local timezone format (YYYY-MM-DDTHH:MM:SS)",
+              "End time in local timezone format (YYYY-MM-DDTHH:MM:SS) or date-only (YYYY-MM-DD) for all-day events",
           },
           description: {
             type: "string",
             description: "Optional event description",
+          },
+          all_day: {
+            type: "boolean",
+            description: "Set to true for all-day events (no specific time). When true, use date-only format for start_time and end_time.",
           },
         },
         required: ["title", "start_time", "end_time"],

@@ -1,7 +1,9 @@
+const convexSiteUrl = process.env.CONVEX_SITE_URL;
+
 export default {
   providers: [
     {
-      domain: "https://grandiose-gnu-13.convex.site",
+      domain: convexSiteUrl,
       applicationID: "convex",
     },
   ],

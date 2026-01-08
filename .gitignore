@@ -14,7 +14,8 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
-.env.example
+# Keep .env.example tracked for documentation
+!.env.example
 
 # API keys (extra safety)
 *.key

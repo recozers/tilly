@@ -21,6 +21,7 @@
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo"
   },
   "devDependencies": {
+    "@types/node": "^25.0.3",
     "concurrently": "^9.1.2",
     "typescript": "^5.7.2"
   },

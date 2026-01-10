@@ -7,6 +7,8 @@ export default defineConfig({
     include: ['**/*.test.ts'],
     globals: true,
     environment: 'node',
+    // Don't use workspace when running this config directly
+    workspace: undefined,
     coverage: {
       provider: 'v8',
       include: ['**/*.ts'],

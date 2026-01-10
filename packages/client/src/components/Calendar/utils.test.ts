@@ -230,6 +230,17 @@ describe('calculateEventLayout', () => {
     expect(result[0]._id).toBe('1');
   });
 
+  it('sorts events with same start time by duration (longer first)', () => {
+    const events = [
+      createTimedEvent('short', new Date(2025, 0, 15, 10, 0).getTime(), new Date(2025, 0, 15, 11, 0).getTime()), // 1 hour
+      createTimedEvent('long', new Date(2025, 0, 15, 10, 0).getTime(), new Date(2025, 0, 15, 13, 0).getTime()), // 3 hours
+    ];
+    const result = calculateEventLayout(events, jan15);
+    // Longer event should come first
+    expect(result[0]._id).toBe('long');
+    expect(result[1]._id).toBe('short');
+  });
+
   it('places non-overlapping events in single column', () => {
     const events = [
       createTimedEvent('1', new Date(2025, 0, 15, 10, 0).getTime(), new Date(2025, 0, 15, 11, 0).getTime()),

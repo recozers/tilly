@@ -190,9 +190,15 @@ export function EventModal({
     let endDateTime: Date;
 
     if (allDay) {
-      // For all-day events, use date inputs and set to midnight
-      startDateTime = new Date(startDate + 'T00:00:00');
-      endDateTime = new Date(endDate + 'T23:59:59');
+      // For all-day events, use UTC to avoid timezone shifting
+      // Parse date components and create UTC midnight times
+      const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+      const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+
+      // Start at 00:00:00 UTC
+      startDateTime = new Date(Date.UTC(startYear, startMonth - 1, startDay, 0, 0, 0));
+      // End at 23:59:59.999 UTC
+      endDateTime = new Date(Date.UTC(endYear, endMonth - 1, endDay, 23, 59, 59, 999));
 
       if (endDateTime < startDateTime) {
         setError('End date must be on or after start date');

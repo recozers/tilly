@@ -20,6 +20,7 @@ import type * as friends_mutations from "../friends/mutations.js";
 import type * as friends_queries from "../friends/queries.js";
 import type * as http from "../http.js";
 import type * as ical_actions from "../ical/actions.js";
+import type * as ical_parser from "../ical/parser.js";
 import type * as meetings_mutations from "../meetings/mutations.js";
 import type * as meetings_queries from "../meetings/queries.js";
 import type * as subscriptions_mutations from "../subscriptions/mutations.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   "friends/queries": typeof friends_queries;
   http: typeof http;
   "ical/actions": typeof ical_actions;
+  "ical/parser": typeof ical_parser;
   "meetings/mutations": typeof meetings_mutations;
   "meetings/queries": typeof meetings_queries;
   "subscriptions/mutations": typeof subscriptions_mutations;

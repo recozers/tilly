@@ -158,8 +158,8 @@ describe('getAllDayEvents', () => {
   });
 
   it('handles multi-day all-day events', () => {
-    // Use local time for consistency with how getAllDayEvents normalizes dates
-    const vacation = createEvent('vacation', new Date(2025, 0, 15, 0, 0, 0).getTime(), new Date(2025, 0, 20, 23, 59, 59).getTime(), true);
+    // All-day events are stored in UTC
+    const vacation = createEvent('vacation', Date.UTC(2025, 0, 15, 0, 0, 0), Date.UTC(2025, 0, 20, 23, 59, 59), true);
     const events = [vacation];
 
     // Should include on all days
@@ -181,9 +181,10 @@ describe('getAllDayEvents', () => {
   });
 
   it('handles events at day boundaries', () => {
+    // All-day events stored in UTC
     const events = [
-      createEvent('start', new Date(2025, 0, 15, 0, 0, 0).getTime(), new Date(2025, 0, 15, 23, 59, 59).getTime(), true),
-      createEvent('end', new Date(2025, 0, 15, 0, 0, 0).getTime(), new Date(2025, 0, 15, 23, 59, 59).getTime(), true),
+      createEvent('start', Date.UTC(2025, 0, 15, 0, 0, 0), Date.UTC(2025, 0, 15, 23, 59, 59), true),
+      createEvent('end', Date.UTC(2025, 0, 15, 0, 0, 0), Date.UTC(2025, 0, 15, 23, 59, 59), true),
     ];
     const result = getAllDayEvents(events, new Date(2025, 0, 15));
     expect(result).toHaveLength(2);

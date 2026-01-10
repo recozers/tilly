@@ -34,6 +34,56 @@ function formatDate(timestamp: number, timezone: string): string {
 }
 
 /**
+ * Parse a local datetime string (YYYY-MM-DDTHH:MM:SS) as being in a specific timezone
+ * and return the UTC timestamp.
+ */
+function parseLocalDateTime(dateTimeStr: string, timezone: string): number {
+  // Parse the components from the datetime string
+  const [datePart, timePart] = dateTimeStr.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hours, minutes, seconds = 0] = (timePart || "00:00:00")
+    .split(":")
+    .map(Number);
+
+  // Create a date in UTC with the given components
+  const utcDate = Date.UTC(year, month - 1, day, hours, minutes, seconds);
+
+  // Use Intl.DateTimeFormat to get the UTC offset for this timezone at this time
+  // by comparing what UTC time produces the same local time
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+
+  // Get what the UTC timestamp looks like in the target timezone
+  const parts = formatter.formatToParts(new Date(utcDate));
+  const getPart = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)?.value || "0", 10);
+
+  const tzYear = getPart("year");
+  const tzMonth = getPart("month");
+  const tzDay = getPart("day");
+  const tzHour = getPart("hour") === 24 ? 0 : getPart("hour"); // Handle midnight edge case
+  const tzMinute = getPart("minute");
+  const tzSecond = getPart("second");
+
+  // Calculate the offset in milliseconds
+  // offset = (UTC time formatted in TZ) - (what we want in local TZ)
+  const tzAsUtc = Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute, tzSecond);
+  const offset = tzAsUtc - utcDate;
+
+  // The actual UTC time is: utcDate - offset
+  // Because if UTC shows as +5 hours in the timezone, we need to subtract 5 hours
+  return utcDate - offset;
+}
+
+/**
  * Build system prompt with calendar context
  */
 function buildSystemPrompt(
@@ -154,8 +204,9 @@ async function executeTool(
         // End at 23:59:59 UTC of the end date
         endTime = Date.UTC(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
       } else {
-        startTime = new Date(args.start_time as string).getTime();
-        endTime = new Date(args.end_time as string).getTime();
+        // Parse datetime strings in the user's timezone context
+        startTime = parseLocalDateTime(args.start_time as string, timezone);
+        endTime = parseLocalDateTime(args.end_time as string, timezone);
       }
 
       const event = await ctx.runMutation(api.events.mutations.create, {
@@ -186,8 +237,9 @@ async function executeTool(
 
     case "move_event": {
       const eventId = args.event_id as Id<"events">;
-      const startTime = new Date(args.new_start_time as string).getTime();
-      const endTime = new Date(args.new_end_time as string).getTime();
+      // Parse datetime strings in the user's timezone context
+      const startTime = parseLocalDateTime(args.new_start_time as string, timezone);
+      const endTime = parseLocalDateTime(args.new_end_time as string, timezone);
 
       const event = await ctx.runMutation(api.events.mutations.update, {
         id: eventId,

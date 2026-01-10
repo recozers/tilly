@@ -91,10 +91,15 @@ function getAllDayEvents(events: CalendarEvent[], dayStart: Date): CalendarEvent
     const eventStart = new Date(e.startTime);
     const eventEnd = new Date(e.endTime);
 
-    // Normalize to date-only comparisons (ignore time)
-    const eventStartDate = new Date(eventStart.getFullYear(), eventStart.getMonth(), eventStart.getDate());
-    const eventEndDate = new Date(eventEnd.getFullYear(), eventEnd.getMonth(), eventEnd.getDate());
-    const dayDate = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate());
+    // All-day events are stored in UTC, so use UTC getters to avoid timezone shifting
+    // This ensures Jan 15 UTC stays as Jan 15 regardless of local timezone
+    const eventStartDate = Date.UTC(eventStart.getUTCFullYear(), eventStart.getUTCMonth(), eventStart.getUTCDate());
+    const eventEndDate = Date.UTC(eventEnd.getUTCFullYear(), eventEnd.getUTCMonth(), eventEnd.getUTCDate());
+
+    // The display day should also be compared as a UTC date
+    // dayStart is a local date representing "which calendar day the user is looking at"
+    // We compare against the local date components to match user expectation
+    const dayDate = Date.UTC(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate());
 
     // Check if the day falls within the event's date range (inclusive)
     return dayDate >= eventStartDate && dayDate <= eventEndDate;

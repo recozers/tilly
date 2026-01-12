@@ -17,7 +17,7 @@ export const ResendOTP = Resend({
   async sendVerificationRequest({ identifier: email, provider, token }) {
     const resend = new ResendAPI(provider.apiKey);
     await resend.emails.send({
-      from: "Tilly <onboarding@resend.dev>",
+      from: "Tilly <noreply@notifications.tillycal.co>",
       to: [email],
       subject: "Verify your email for Tilly",
       text: `Your verification code is: ${token}\n\nThis code will expire in 10 minutes.`,

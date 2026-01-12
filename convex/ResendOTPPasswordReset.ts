@@ -17,7 +17,7 @@ export const ResendOTPPasswordReset = Resend({
   async sendVerificationRequest({ identifier: email, provider, token }) {
     const resend = new ResendAPI(provider.apiKey);
     await resend.emails.send({
-      from: "Tilly <onboarding@resend.dev>",
+      from: "Tilly <noreply@notifications.tillycal.co>",
       to: [email],
       subject: "Reset your Tilly password",
       text: `Your password reset code is: ${token}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, you can ignore this email.`,

@@ -12,9 +12,12 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<{ needsVerification: boolean }>;
   signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  confirmResetPassword: (email: string, code: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -31,8 +34,10 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     await signIn('password', { email, password, flow: 'signIn' });
   };
 
-  const handleSignUp = async (email: string, password: string) => {
+  const handleSignUp = async (email: string, password: string): Promise<{ needsVerification: boolean }> => {
     await signIn('password', { email, password, flow: 'signUp' });
+    // With email verification enabled, signup will require verification
+    return { needsVerification: true };
   };
 
   const handleSignOut = async () => {
@@ -41,6 +46,18 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
 
   const handleSignInWithGoogle = async () => {
     await signIn('google');
+  };
+
+  const handleVerifyEmail = async (email: string, code: string) => {
+    await signIn('password', { email, code, flow: 'email-verification' });
+  };
+
+  const handleResetPassword = async (email: string) => {
+    await signIn('password', { email, flow: 'reset' });
+  };
+
+  const handleConfirmResetPassword = async (email: string, code: string, newPassword: string) => {
+    await signIn('password', { email, code, newPassword, flow: 'reset-verification' });
   };
 
   // For Convex Auth, user info comes from the identity
@@ -55,6 +72,9 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     signUp: handleSignUp,
     signOut: handleSignOut,
     signInWithGoogle: handleSignInWithGoogle,
+    verifyEmail: handleVerifyEmail,
+    resetPassword: handleResetPassword,
+    confirmResetPassword: handleConfirmResetPassword,
   };
 
   return (

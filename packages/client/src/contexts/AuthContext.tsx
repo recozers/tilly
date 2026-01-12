@@ -7,12 +7,16 @@ interface User {
   email?: string;
 }
 
+interface AuthResult {
+  signingIn: boolean;
+}
+
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<{ needsVerification: boolean }>;
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  signUp: (email: string, password: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   verifyEmail: (email: string, code: string) => Promise<void>;
@@ -30,14 +34,16 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn, signOut } = useAuthActions();
 
-  const handleSignIn = async (email: string, password: string) => {
-    await signIn('password', { email, password, flow: 'signIn' });
+  const handleSignIn = async (email: string, password: string): Promise<AuthResult> => {
+    const result = await signIn('password', { email, password, flow: 'signIn' });
+    // signingIn will be false if verification is needed
+    return { signingIn: result.signingIn };
   };
 
-  const handleSignUp = async (email: string, password: string): Promise<{ needsVerification: boolean }> => {
-    await signIn('password', { email, password, flow: 'signUp' });
-    // With email verification enabled, signup will require verification
-    return { needsVerification: true };
+  const handleSignUp = async (email: string, password: string): Promise<AuthResult> => {
+    const result = await signIn('password', { email, password, flow: 'signUp' });
+    // signingIn will be false if verification is needed
+    return { signingIn: result.signingIn };
   };
 
   const handleSignOut = async () => {

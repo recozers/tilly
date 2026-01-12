@@ -49,7 +49,12 @@ export function AuthModal(): JSX.Element {
     setIsLoading(true);
 
     try {
-      await signIn(email, password);
+      const result = await signIn(email, password);
+      // If signingIn is false, verification is needed
+      if (!result.signingIn) {
+        setMode('verify-email');
+        setMessage('Please check your email for a verification code.');
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Sign in failed';
       // Check if it's an email verification error
@@ -77,7 +82,8 @@ export function AuthModal(): JSX.Element {
 
     try {
       const result = await signUp(email, password);
-      if (result.needsVerification) {
+      // If signingIn is false, verification is needed
+      if (!result.signingIn) {
         setMode('verify-email');
         setMessage('Check your email for a verification code.');
         resetForm();

@@ -3,14 +3,16 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 /**
- * Generate a secure random token
+ * Generate a cryptographically secure random token
  */
 function generateToken(): string {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const randomBytes = new Uint8Array(32);
+  crypto.getRandomValues(randomBytes);
   let token = "";
   for (let i = 0; i < 32; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
+    token += chars.charAt(randomBytes[i] % chars.length);
   }
   return token;
 }

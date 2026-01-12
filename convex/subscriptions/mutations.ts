@@ -169,6 +169,14 @@ export const triggerSync = action({
       throw new Error("Not authenticated");
     }
 
+    // Verify ownership before triggering sync
+    const subscription = await ctx.runQuery(internal.subscriptions.queries.getByIdInternal, {
+      id: args.id,
+    });
+    if (!subscription || subscription.userId !== identity.subject) {
+      throw new Error("Subscription not found");
+    }
+
     // Trigger the sync action
     const result = await ctx.runAction(internal.subscriptions.sync.syncOne, {
       subscriptionId: args.id,

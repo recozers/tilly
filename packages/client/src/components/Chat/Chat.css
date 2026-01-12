@@ -257,6 +257,28 @@
   51%, 100% { opacity: 0; }
 }
 
+/* Markdown Content Styles */
+.markdown-content {
+  display: inline;
+}
+
+.markdown-content .md-bold {
+  font-weight: 700;
+}
+
+.markdown-content .md-italic {
+  font-style: italic;
+}
+
+.markdown-content .md-list {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.markdown-content .md-list-item {
+  margin: 4px 0;
+}
+
 /* Tool Calls */
 .message-tool-calls {
   margin-top: 10px;

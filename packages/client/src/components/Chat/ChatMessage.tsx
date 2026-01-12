@@ -1,3 +1,5 @@
+import { MarkdownContent } from './MarkdownContent';
+
 interface ToolCall {
   id: string;
   name: string;
@@ -54,8 +56,11 @@ export function ChatMessage({ message }: ChatMessageProps): JSX.Element {
           <span className="message-time">{formatTime(new Date(message.timestamp))}</span>
         </div>
         <div className="message-text">
-          {message.content}
-          {message.isStreaming && <span className="typing-cursor">▌</span>}
+          {isUser ? (
+            message.content
+          ) : (
+            <MarkdownContent content={message.content} isStreaming={message.isStreaming} />
+          )}
         </div>
 
         {/* Tool calls display */}

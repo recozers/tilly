@@ -11,7 +11,7 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*", "../../convex/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx", "src/test/**/*", "../../convex/**/*.test.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx", "src/test/**/*", "../../convex/**/*.test.ts", "../../convex/ResendOTP.ts", "../../convex/ResendOTPPasswordReset.ts"],
   "references": [
     { "path": "../shared" }
   ]

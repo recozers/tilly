@@ -159,11 +159,12 @@ async function executeTool(
 ): Promise<{ data: unknown; event?: unknown }> {
   switch (toolName) {
     case "get_calendar_events": {
+      // Parse date strings as start/end of day in user's timezone
       const startDate = args.start_date
-        ? new Date(args.start_date as string).getTime()
+        ? parseLocalDateTime(`${args.start_date as string}T00:00:00`, timezone)
         : undefined;
       const endDate = args.end_date
-        ? new Date(args.end_date as string).getTime()
+        ? parseLocalDateTime(`${args.end_date as string}T23:59:59`, timezone)
         : undefined;
 
       const events = await ctx.runQuery(api.events.queries.list, {
@@ -265,8 +266,9 @@ async function executeTool(
     }
 
     case "check_time_conflicts": {
-      const startTime = new Date(args.start_time as string).getTime();
-      const endTime = new Date(args.end_time as string).getTime();
+      // Parse datetime strings in the user's timezone context
+      const startTime = parseLocalDateTime(args.start_time as string, timezone);
+      const endTime = parseLocalDateTime(args.end_time as string, timezone);
 
       const result = await ctx.runQuery(api.events.queries.checkConflicts, {
         startTime,

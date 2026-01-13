@@ -28,7 +28,7 @@ export const CALENDAR_TOOLS = [
     type: "function" as const,
     function: {
       name: "create_event",
-      description: "Create a new calendar event. Always check for conflicts first. For all-day events, set all_day to true and use date-only format (YYYY-MM-DD) for start and end times.",
+      description: "Create a new calendar event. Always check for conflicts first. For all-day events, set all_day to true and use date-only format (YYYY-MM-DD) for start and end times. For recurring events, use the recurrence parameter.",
       parameters: {
         type: "object",
         properties: {
@@ -50,6 +50,38 @@ export const CALENDAR_TOOLS = [
           all_day: {
             type: "boolean",
             description: "Set to true for all-day events (no specific time). When true, use date-only format for start_time and end_time.",
+          },
+          recurrence: {
+            type: "object",
+            description: "Optional recurrence settings for repeating events",
+            properties: {
+              frequency: {
+                type: "string",
+                enum: ["daily", "weekly", "monthly", "yearly"],
+                description: "How often the event repeats",
+              },
+              interval: {
+                type: "number",
+                description: "Interval between occurrences (e.g., 2 for every 2 weeks). Defaults to 1.",
+              },
+              days_of_week: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"],
+                },
+                description: "For weekly recurrence, which days of the week (e.g., ['MO', 'WE', 'FR'] for Monday, Wednesday, Friday)",
+              },
+              count: {
+                type: "number",
+                description: "Number of occurrences (e.g., 10 for 10 total occurrences). Use either count or until, not both.",
+              },
+              until: {
+                type: "string",
+                description: "End date for recurrence in YYYY-MM-DD format. Use either until or count, not both.",
+              },
+            },
+            required: ["frequency"],
           },
         },
         required: ["title", "start_time", "end_time"],

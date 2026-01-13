@@ -23,6 +23,9 @@ export const create = mutation({
     allDay: v.optional(v.boolean()),
     timezone: v.optional(v.string()),
     reminders: v.optional(v.array(v.number())),
+    rrule: v.optional(v.string()),
+    dtstart: v.optional(v.number()),
+    duration: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -41,6 +44,9 @@ export const create = mutation({
       allDay: args.allDay,
       timezone: args.timezone,
       reminders: args.reminders,
+      rrule: args.rrule,
+      dtstart: args.dtstart,
+      duration: args.duration,
     });
 
     return await ctx.db.get(eventId);

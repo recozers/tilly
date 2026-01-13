@@ -144,7 +144,66 @@ Guidelines:
 5. Always format times in a human-readable way.
 6. You can use multiple tools in sequence to complete complex tasks.
 7. If a task requires multiple steps, complete all steps before responding to the user.
-8. For all-day events (birthdays, holidays, deadlines without specific times), set all_day: true and use date-only format (YYYY-MM-DD) for start and end times. For single-day events, use the same date for both.`;
+8. For all-day events (birthdays, holidays, deadlines without specific times), set all_day: true and use date-only format (YYYY-MM-DD) for start and end times. For single-day events, use the same date for both.
+
+Recurring Events:
+- When users ask for repeating/recurring events, use the recurrence parameter.
+- Examples of recurring event requests:
+  - "every day" → frequency: "daily"
+  - "every week" or "weekly" → frequency: "weekly"
+  - "every Monday and Wednesday" → frequency: "weekly", days_of_week: ["MO", "WE"]
+  - "every other week" → frequency: "weekly", interval: 2
+  - "every month" → frequency: "monthly"
+  - "every year" or "annually" → frequency: "yearly"
+  - "for 10 weeks" → count: 10
+  - "until December" → until: "YYYY-12-31"
+- For weekly recurrence on specific days, always include days_of_week.
+- If no end condition is specified, the event will repeat indefinitely.`;
+}
+
+/**
+ * Build RRULE string from recurrence parameters
+ */
+interface RecurrenceParams {
+  frequency: "daily" | "weekly" | "monthly" | "yearly";
+  interval?: number;
+  days_of_week?: string[];
+  count?: number;
+  until?: string;
+}
+
+function buildRRule(recurrence: RecurrenceParams): string {
+  const parts: string[] = [];
+
+  // Frequency (required)
+  const freqMap: Record<string, string> = {
+    daily: "DAILY",
+    weekly: "WEEKLY",
+    monthly: "MONTHLY",
+    yearly: "YEARLY",
+  };
+  parts.push(`FREQ=${freqMap[recurrence.frequency]}`);
+
+  // Interval (optional, defaults to 1)
+  if (recurrence.interval && recurrence.interval > 1) {
+    parts.push(`INTERVAL=${recurrence.interval}`);
+  }
+
+  // Days of week for weekly recurrence
+  if (recurrence.days_of_week && recurrence.days_of_week.length > 0) {
+    parts.push(`BYDAY=${recurrence.days_of_week.join(",")}`);
+  }
+
+  // End condition: count or until (not both)
+  if (recurrence.count) {
+    parts.push(`COUNT=${recurrence.count}`);
+  } else if (recurrence.until) {
+    // Convert YYYY-MM-DD to RRULE format (YYYYMMDD)
+    const untilDate = recurrence.until.replace(/-/g, "");
+    parts.push(`UNTIL=${untilDate}T235959Z`);
+  }
+
+  return parts.join(";");
 }
 
 /**
@@ -210,27 +269,46 @@ async function executeTool(
         endTime = parseLocalDateTime(args.end_time as string, timezone);
       }
 
+      // Build recurrence rule if provided
+      let rrule: string | undefined;
+      let duration: number | undefined;
+      if (args.recurrence) {
+        rrule = buildRRule(args.recurrence as RecurrenceParams);
+        duration = endTime - startTime;
+      }
+
       const event = await ctx.runMutation(api.events.mutations.create, {
         title: args.title as string,
         startTime,
         endTime,
         description: args.description as string | undefined,
         allDay: isAllDay,
+        rrule,
+        dtstart: args.recurrence ? startTime : undefined,
+        duration,
       });
 
       if (!event) {
         throw new Error("Failed to create event");
       }
 
+      // Build response with recurrence info if applicable
+      const eventResponse: Record<string, unknown> = {
+        id: event._id,
+        title: event.title,
+        start: formatDate(event.startTime, timezone),
+        end: formatDate(event.endTime, timezone),
+      };
+
+      if (rrule) {
+        eventResponse.recurring = true;
+        eventResponse.recurrence = args.recurrence;
+      }
+
       return {
         data: {
           success: true,
-          event: {
-            id: event._id,
-            title: event.title,
-            start: formatDate(event.startTime, timezone),
-            end: formatDate(event.endTime, timezone),
-          },
+          event: eventResponse,
         },
         event,
       };

@@ -1,5 +1,50 @@
 import { query } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import type { Id } from "../_generated/dataModel";
+
+/**
+ * Helper to get user ID with fallback to identity email lookup
+ * Also validates that the user actually exists in the database
+ */
+async function getUserId(ctx: any): Promise<Id<"users"> | null> {
+  // Get the identity first - we need this for both approaches
+  const identity = await ctx.auth.getUserIdentity();
+  console.log("[getUserId] identity:", JSON.stringify(identity));
+
+  if (!identity) {
+    console.log("[getUserId] No identity, user not authenticated");
+    return null;
+  }
+
+  // Try the standard auth method first
+  const authUserId = await getAuthUserId(ctx);
+  console.log("[getUserId] getAuthUserId returned:", authUserId);
+
+  if (authUserId) {
+    // IMPORTANT: Verify this user actually exists in the database
+    // The token might contain a stale/phantom user ID
+    const user = await ctx.db.get(authUserId);
+    if (user) {
+      console.log("[getUserId] User exists, returning authUserId");
+      return authUserId;
+    }
+    console.log("[getUserId] WARNING: authUserId does not exist in database!");
+  }
+
+  // Fallback: look up user by email from the identity
+  if (identity.email) {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q: any) => q.eq("email", identity.email))
+      .first();
+    console.log("[getUserId] user lookup by email result:", user?._id);
+    if (user) {
+      return user._id;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Get all accepted friends for the current user
@@ -7,7 +52,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getUserId(ctx);
     if (!userId) {
       return [];
     }
@@ -42,7 +87,7 @@ export const list = query({
 export const getPendingRequests = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getUserId(ctx);
     if (!userId) {
       return [];
     }
@@ -79,7 +124,7 @@ export const getPendingRequests = query({
 export const getSentRequests = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getUserId(ctx);
     if (!userId) {
       return [];
     }

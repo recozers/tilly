@@ -972,79 +972,66 @@
 }
 
 /* Profile Tab */
-.profile-tab .section {
-  margin-bottom: 28px;
-}
-
-.profile-field {
-  margin-bottom: 16px;
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gray-500);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 6px;
-}
-
-.field-value {
-  font-size: 15px;
-  color: var(--gray-800);
-  padding: 8px 0;
-}
-
-.field-value-editable {
+.profile-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 15px;
-  color: var(--gray-800);
-  padding: 8px 0;
+  gap: 16px;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--primary-50) 0%, var(--primary-100) 100%);
+  border-radius: var(--radius-lg);
+  margin-bottom: 24px;
 }
 
-.field-value-editable span {
+.profile-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.25);
+}
+
+.profile-info {
   flex: 1;
+  min-width: 0;
 }
 
-.edit-field {
+.profile-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--gray-800);
+  margin-bottom: 2px;
+}
+
+.profile-email {
+  font-size: 14px;
+  color: var(--gray-600);
+}
+
+.edit-name-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
-.edit-field .form-input {
-  max-width: 300px;
-}
-
-.edit-actions {
+.edit-name-actions {
   display: flex;
   gap: 8px;
 }
 
-.btn-link {
-  background: none;
-  border: none;
-  color: var(--primary-600);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 4px 8px;
+.signout-item {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
 }
 
-.btn-link:hover {
-  text-decoration: underline;
-}
-
-.btn-secondary {
-  background: var(--gray-100);
-  color: var(--gray-700);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--gray-200);
+.signout-item:hover {
+  background: #fee2e2;
 }
 
 /* Responsive */

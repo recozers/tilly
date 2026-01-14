@@ -27,7 +27,7 @@ export function ProfileTab(): JSX.Element {
 
     try {
       await updateProfile({ name: name.trim() || undefined });
-      setSuccess('Profile updated successfully');
+      setSuccess('Profile updated');
       setIsEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update profile');
@@ -54,64 +54,88 @@ export function ProfileTab(): JSX.Element {
     return <div className="tab-loading">Loading...</div>;
   }
 
+  const displayName = profile?.name || profile?.email?.split('@')[0] || '?';
+  const initial = displayName[0].toUpperCase();
+
   return (
     <div className="profile-tab">
       {error && <div className="alert alert-error">{error}</div>}
       {success && <div className="alert alert-success">{success}</div>}
 
-      <div className="section">
-        <h3 className="section-title">Your Profile</h3>
-
-        <div className="profile-field">
-          <label className="field-label">Email</label>
-          <div className="field-value">{profile?.email || 'Not set'}</div>
+      {/* Profile Card */}
+      <div className="profile-card">
+        <div className="profile-avatar">
+          {initial}
         </div>
-
-        <div className="profile-field">
-          <label className="field-label">Name</label>
-          {isEditing ? (
-            <div className="edit-field">
-              <input
-                type="text"
-                className="form-input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter your name"
-                autoFocus
-              />
-              <div className="edit-actions">
-                <button
-                  className="btn btn-primary"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? 'Saving...' : 'Save'}
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleCancel}
-                  disabled={isSaving}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="field-value-editable">
-              <span>{profile?.name || 'Not set'}</span>
-              <button className="btn btn-link" onClick={() => setIsEditing(true)}>
-                Edit
-              </button>
-            </div>
-          )}
+        <div className="profile-info">
+          <div className="profile-name">{profile?.name || 'No name set'}</div>
+          <div className="profile-email">{profile?.email}</div>
         </div>
       </div>
 
+      {/* Edit Name Section */}
+      <div className="section">
+        <h3 className="section-title">Display Name</h3>
+        {isEditing ? (
+          <div className="edit-name-form">
+            <input
+              type="text"
+              className="form-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter your name"
+              autoFocus
+            />
+            <div className="edit-name-actions">
+              <button
+                className="btn btn-primary"
+                onClick={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={handleCancel}
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="list">
+            <div className="list-item">
+              <div className="list-item-info">
+                <div className="list-item-details">
+                  <span className="list-item-name">{profile?.name || 'Not set'}</span>
+                  <span className="list-item-sub">This is how you appear to friends</span>
+                </div>
+              </div>
+              <button className="btn btn-sm btn-success" onClick={() => setIsEditing(true)}>
+                Edit
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Account Section */}
       <div className="section">
         <h3 className="section-title">Account</h3>
-        <button className="btn btn-danger" onClick={handleSignOut}>
-          Sign Out
-        </button>
+        <div className="list">
+          <div className="list-item signout-item">
+            <div className="list-item-info">
+              <div className="list-item-details">
+                <span className="list-item-name">Sign out</span>
+                <span className="list-item-sub">Sign out of your account on this device</span>
+              </div>
+            </div>
+            <button className="btn btn-sm btn-danger" onClick={handleSignOut}>
+              Sign Out
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

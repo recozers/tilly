@@ -26,6 +26,7 @@ export function AuthModal(): JSX.Element {
 
   const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -35,6 +36,7 @@ export function AuthModal(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
 
   const resetForm = () => {
+    setName('');
     setPassword('');
     setNewPassword('');
     setConfirmPassword('');
@@ -81,7 +83,7 @@ export function AuthModal(): JSX.Element {
     setIsLoading(true);
 
     try {
-      const result = await signUp(email, password);
+      const result = await signUp(email, password, name || undefined);
       // If signingIn is false, verification is needed
       if (!result.signingIn) {
         setMode('verify-email');
@@ -251,6 +253,19 @@ export function AuthModal(): JSX.Element {
             {error && <div className="auth-error">{error}</div>}
 
             <form onSubmit={handleSignUp}>
+              <div className="form-group">
+                <label htmlFor="name">Name</label>
+                <input
+                  id="name"
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  disabled={isLoading}
+                  autoComplete="name"
+                  placeholder="Optional"
+                />
+              </div>
+
               <div className="form-group">
                 <label htmlFor="email">Email</label>
                 <input

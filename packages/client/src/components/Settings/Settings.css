@@ -971,6 +971,82 @@
   line-height: 1.5;
 }
 
+/* Profile Tab */
+.profile-tab .section {
+  margin-bottom: 28px;
+}
+
+.profile-field {
+  margin-bottom: 16px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.field-value {
+  font-size: 15px;
+  color: var(--gray-800);
+  padding: 8px 0;
+}
+
+.field-value-editable {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  color: var(--gray-800);
+  padding: 8px 0;
+}
+
+.field-value-editable span {
+  flex: 1;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-field .form-input {
+  max-width: 300px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--primary-600);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.btn-secondary {
+  background: var(--gray-100);
+  color: var(--gray-700);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--gray-200);
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   .settings-modal {

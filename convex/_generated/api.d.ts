@@ -28,6 +28,8 @@ import type * as meetings_queries from "../meetings/queries.js";
 import type * as subscriptions_mutations from "../subscriptions/mutations.js";
 import type * as subscriptions_queries from "../subscriptions/queries.js";
 import type * as subscriptions_sync from "../subscriptions/sync.js";
+import type * as users_mutations from "../users/mutations.js";
+import type * as users_queries from "../users/queries.js";
 
 import type {
   ApiFromModules,
@@ -56,6 +58,8 @@ declare const fullApi: ApiFromModules<{
   "subscriptions/mutations": typeof subscriptions_mutations;
   "subscriptions/queries": typeof subscriptions_queries;
   "subscriptions/sync": typeof subscriptions_sync;
+  "users/mutations": typeof users_mutations;
+  "users/queries": typeof users_queries;
 }>;
 
 /**

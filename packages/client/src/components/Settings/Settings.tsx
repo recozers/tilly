@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ProfileTab } from './ProfileTab.js';
 import { FriendsTab } from './FriendsTab.js';
 import { SubscriptionsTab } from './SubscriptionsTab.js';
 import { SharingTab } from './SharingTab.js';
@@ -9,7 +10,7 @@ interface SettingsProps {
   onClose: () => void;
 }
 
-type TabId = 'friends' | 'subscriptions' | 'sharing';
+type TabId = 'profile' | 'friends' | 'subscriptions' | 'sharing';
 
 interface Tab {
   id: TabId;
@@ -18,6 +19,7 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
+  { id: 'profile', label: 'Profile', icon: '👤' },
   { id: 'friends', label: 'Friends', icon: '👥' },
   { id: 'subscriptions', label: 'Calendars', icon: '📅' },
   { id: 'sharing', label: 'Sharing', icon: '🔗' },
@@ -60,6 +62,7 @@ export function Settings({ isOpen, onClose }: SettingsProps): JSX.Element | null
         </div>
 
         <div className="settings-content">
+          {activeTab === 'profile' && <ProfileTab />}
           {activeTab === 'friends' && <FriendsTab />}
           {activeTab === 'subscriptions' && <SubscriptionsTab />}
           {activeTab === 'sharing' && <SharingTab />}

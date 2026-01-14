@@ -9,6 +9,12 @@ export const { auth, signIn, signOut, store } = convexAuth({
     Password({
       verify: ResendOTP,
       reset: ResendOTPPasswordReset,
+      profile(params) {
+        return {
+          email: params.email as string,
+          ...(params.name ? { name: params.name as string } : {}),
+        };
+      },
     }),
     Google,
   ],

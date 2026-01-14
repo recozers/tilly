@@ -16,7 +16,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<AuthResult>;
-  signUp: (email: string, password: string) => Promise<AuthResult>;
+  signUp: (email: string, password: string, name?: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   verifyEmail: (email: string, code: string) => Promise<void>;
@@ -40,8 +40,12 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     return { signingIn: result.signingIn };
   };
 
-  const handleSignUp = async (email: string, password: string): Promise<AuthResult> => {
-    const result = await signIn('password', { email, password, flow: 'signUp' });
+  const handleSignUp = async (email: string, password: string, name?: string): Promise<AuthResult> => {
+    const params: Record<string, string> = { email, password, flow: 'signUp' };
+    if (name) {
+      params.name = name;
+    }
+    const result = await signIn('password', params);
     // signingIn will be false if verification is needed
     return { signingIn: result.signingIn };
   };

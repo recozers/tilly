@@ -1,49 +1,43 @@
-import { query } from "../_generated/server";
+import { query, internalQuery } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Id } from "../_generated/dataModel";
+import { v } from "convex/values";
+
+// Internal query to fetch data without auth context filtering
+export const _internalGetPendingRequests = internalQuery({
+  args: { receiverId: v.id("users") },
+  handler: async (ctx, { receiverId }) => {
+    const requests = await ctx.db
+      .query("friendRequests")
+      .withIndex("by_receiver", (q) =>
+        q.eq("receiverId", receiverId).eq("status", "pending")
+      )
+      .collect();
+
+    const requestsWithSender = await Promise.all(
+      requests.map(async (r) => {
+        const sender = await ctx.db.get(r.senderId);
+        return {
+          _id: r._id,
+          senderId: r.senderId,
+          senderEmail: sender?.email,
+          senderName: sender?.name,
+          status: r.status,
+          _creationTime: r._creationTime,
+        };
+      })
+    );
+
+    return requestsWithSender;
+  },
+});
 
 /**
- * Helper to get user ID with fallback to identity email lookup
- * Also validates that the user actually exists in the database
+ * Helper to get user ID from auth context
  */
 async function getUserId(ctx: any): Promise<Id<"users"> | null> {
-  // Get the identity first - we need this for both approaches
-  const identity = await ctx.auth.getUserIdentity();
-  console.log("[getUserId] identity:", JSON.stringify(identity));
-
-  if (!identity) {
-    console.log("[getUserId] No identity, user not authenticated");
-    return null;
-  }
-
-  // Try the standard auth method first
-  const authUserId = await getAuthUserId(ctx);
-  console.log("[getUserId] getAuthUserId returned:", authUserId);
-
-  if (authUserId) {
-    // IMPORTANT: Verify this user actually exists in the database
-    // The token might contain a stale/phantom user ID
-    const user = await ctx.db.get(authUserId);
-    if (user) {
-      console.log("[getUserId] User exists, returning authUserId");
-      return authUserId;
-    }
-    console.log("[getUserId] WARNING: authUserId does not exist in database!");
-  }
-
-  // Fallback: look up user by email from the identity
-  if (identity.email) {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("email", (q: any) => q.eq("email", identity.email))
-      .first();
-    console.log("[getUserId] user lookup by email result:", user?._id);
-    if (user) {
-      return user._id;
-    }
-  }
-
-  return null;
+  const userId = await getAuthUserId(ctx);
+  return userId;
 }
 
 /**
@@ -67,11 +61,13 @@ export const list = query({
     const friends = await Promise.all(
       friendships.map(async (f) => {
         const friend = await ctx.db.get(f.friendId);
+        // Use name if set, otherwise derive from email
+        const displayName = friend?.name || (friend?.email ? friend.email.split("@")[0] : undefined);
         return {
           friendshipId: f._id,
           friendId: f.friendId,
           email: friend?.email,
-          name: friend?.name,
+          name: displayName,
           status: f.status,
         };
       })
@@ -103,11 +99,12 @@ export const getPendingRequests = query({
     const requestsWithSender = await Promise.all(
       requests.map(async (r) => {
         const sender = await ctx.db.get(r.senderId);
+        const displayName = sender?.name || (sender?.email ? sender.email.split("@")[0] : undefined);
         return {
           _id: r._id,
           senderId: r.senderId,
           senderEmail: sender?.email,
-          senderName: sender?.name,
+          senderName: displayName,
           status: r.status,
           _creationTime: r._creationTime,
         };
@@ -119,7 +116,7 @@ export const getPendingRequests = query({
 });
 
 /**
- * Get sent friend requests by the current user
+ * Get sent friend requests by the current user (only pending ones)
  */
 export const getSentRequests = query({
   args: {},
@@ -132,17 +129,19 @@ export const getSentRequests = query({
     const requests = await ctx.db
       .query("friendRequests")
       .withIndex("by_sender", (q) => q.eq("senderId", userId))
+      .filter((q) => q.eq(q.field("status"), "pending"))
       .collect();
 
     // Get receiver details
     const requestsWithReceiver = await Promise.all(
       requests.map(async (r) => {
         const receiver = await ctx.db.get(r.receiverId);
+        const displayName = receiver?.name || (receiver?.email ? receiver.email.split("@")[0] : undefined);
         return {
           _id: r._id,
           receiverId: r.receiverId,
           receiverEmail: receiver?.email,
-          receiverName: receiver?.name,
+          receiverName: displayName,
           status: r.status,
           _creationTime: r._creationTime,
         };

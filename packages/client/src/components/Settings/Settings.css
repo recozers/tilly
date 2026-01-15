@@ -43,15 +43,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--gray-100);
-}
-
-.settings-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--gray-800);
-  margin: 0;
+  background: var(--gray-50);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 .settings-close {
@@ -60,12 +55,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--gray-50);
+  background: white;
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--gray-500);
   transition: all var(--transition-fast);
+  flex-shrink: 0;
 }
 
 .settings-close:hover {
@@ -77,9 +73,7 @@
 .settings-tabs {
   display: flex;
   gap: 4px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--gray-100);
-  background: var(--gray-50);
+  flex: 1;
 }
 
 .settings-tab {

@@ -230,7 +230,6 @@ body {
 
 /* Primary Button - Forest green, for main actions */
 .btn-primary,
-.btn-new-event,
 .calendar-today-btn,
 .chat-send-btn {
   display: flex;
@@ -250,7 +249,6 @@ body {
 }
 
 .btn-primary:hover:not(:disabled),
-.btn-new-event:hover:not(:disabled),
 .calendar-today-btn:hover:not(:disabled),
 .chat-send-btn:hover:not(:disabled) {
   transform: translate(-2px, -2px);
@@ -258,7 +256,6 @@ body {
 }
 
 .btn-primary:active:not(:disabled),
-.btn-new-event:active:not(:disabled),
 .calendar-today-btn:active:not(:disabled),
 .chat-send-btn:active:not(:disabled) {
   transform: translate(2px, 2px);
@@ -266,7 +263,6 @@ body {
 }
 
 .btn-primary:disabled,
-.btn-new-event:disabled,
 .calendar-today-btn:disabled,
 .chat-send-btn:disabled {
   opacity: 0.5;
@@ -276,7 +272,6 @@ body {
 
 /* Secondary Button - Oak/cream, for secondary actions */
 .btn-secondary,
-.btn-logout,
 .chat-clear-btn,
 .calendar-nav-btn {
   display: flex;
@@ -296,7 +291,6 @@ body {
 }
 
 .btn-secondary:hover:not(:disabled),
-.btn-logout:hover:not(:disabled),
 .chat-clear-btn:hover:not(:disabled),
 .calendar-nav-btn:hover:not(:disabled) {
   background: var(--oak-200);
@@ -305,7 +299,6 @@ body {
 }
 
 .btn-secondary:active:not(:disabled),
-.btn-logout:active:not(:disabled),
 .chat-clear-btn:active:not(:disabled),
 .calendar-nav-btn:active:not(:disabled) {
   transform: translate(2px, 2px);
@@ -313,7 +306,6 @@ body {
 }
 
 .btn-secondary:disabled,
-.btn-logout:disabled,
 .chat-clear-btn:disabled,
 .calendar-nav-btn:disabled {
   opacity: 0.5;
@@ -321,8 +313,7 @@ body {
 }
 
 /* Icon Button - For icon-only buttons */
-.btn-icon,
-.btn-settings {
+.btn-icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -338,36 +329,20 @@ body {
   box-shadow: 3px 3px 0 var(--oak-400);
 }
 
-.btn-icon:hover,
-.btn-settings:hover {
+.btn-icon:hover {
   background: var(--oak-200);
   transform: translate(-2px, -2px);
   box-shadow: 5px 5px 0 var(--oak-400);
 }
 
-.btn-settings:hover {
-  transform: translate(-2px, -2px) rotate(15deg);
-}
-
-.btn-settings:active {
-  transform: translate(2px, 2px) rotate(0deg);
-  box-shadow: 1px 1px 0 var(--oak-400);
-}
-
 /* Ensure SVGs inside buttons are visible */
-.btn-icon svg,
-.btn-settings svg {
+.btn-icon svg {
   display: block;
   width: 20px;
   height: 20px;
   stroke: var(--earth-700) !important;
   stroke-width: 2 !important;
   fill: none !important;
-}
-
-.btn-settings svg circle,
-.btn-settings svg path {
-  stroke: var(--earth-700) !important;
 }
 
 /* Main Content */
@@ -673,12 +648,6 @@ body {
     display: none;
   }
 
-  .btn-new-event,
-  .btn-logout {
-    padding: 10px 14px;
-    font-size: 13px;
-  }
-
   .app-main {
     padding: 14px;
     gap: 14px;
@@ -698,10 +667,6 @@ body {
 
   .logo-icon {
     font-size: 26px;
-  }
-
-  .btn-new-event span {
-    display: none;
   }
 
   .calendar-section {

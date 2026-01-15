@@ -6,6 +6,8 @@ import { Calendar } from './components/Calendar/index.js';
 import { Chat } from './components/Chat/index.js';
 import { EventModal } from './components/EventModal/index.js';
 import { Settings } from './components/Settings/Settings.js';
+import { HeaderMenu } from './components/HeaderMenu/index.js';
+import type { MenuTab } from './components/HeaderMenu/index.js';
 import type { Id } from '../../../convex/_generated/dataModel';
 
 // Local types that match Convex schema
@@ -62,6 +64,7 @@ export default function App(): JSX.Element {
   const [newEventDate, setNewEventDate] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<MenuTab>('friends');
 
   // Handle event click from calendar
   const handleEventClick = useCallback((event: CalendarEvent) => {
@@ -139,18 +142,13 @@ export default function App(): JSX.Element {
         </div>
         <div className="header-right">
           {user?.email && <span className="user-email">{user.email}</span>}
-          <button className="btn-new-event" onClick={() => handleTimeSlotClick(new Date())}>
-            + New Event
-          </button>
-          <button className="btn-settings" onClick={() => setIsSettingsOpen(true)} aria-label="Settings">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button className="btn-logout" onClick={signOut}>
-            Sign Out
-          </button>
+          <HeaderMenu
+            onOpenTab={(tab) => {
+              setSettingsTab(tab);
+              setIsSettingsOpen(true);
+            }}
+            onSignOut={signOut}
+          />
         </div>
       </header>
 
@@ -179,7 +177,7 @@ export default function App(): JSX.Element {
         />
       )}
 
-      <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} initialTab={settingsTab} />
     </div>
   );
 }

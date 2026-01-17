@@ -4,7 +4,7 @@ A modern React calendar application with AI-powered natural language event sched
 
 ## Screenshot
 
-<img src='screenshots/Screenshot 2025-06-17 at 12.36.02.png' alt='Tilly Calendar Application' height='400' width='800' />
+<img src='screenshots/Screenshot 2026-01-17 at 10.10.35.png' alt='Tilly Calendar Application' height='400' width='800' />
 
 ## Features
 

@@ -1,6 +1,6 @@
 # Tilly - AI-Powered Calendar Assistant
 
-A modern React calendar application with AI-powered natural language event scheduling, secure multi-user authentication, and comprehensive testing infrastructure.
+A modern React calendar application with AI-powered natural language event scheduling, real-time sync, and social features.
 
 ## Screenshot
 
@@ -9,49 +9,56 @@ A modern React calendar application with AI-powered natural language event sched
 ## Features
 
 ### Core Calendar Features
-- **AI Chat Integration**: Natural language event creation using Claude API with timezone-aware processing
+- **AI Chat Integration**: Natural language event creation using OpenAI with timezone-aware processing
 - **Drag & Drop**: Move events between time slots and days with visual feedback
 - **Event Resizing**: Drag event edges to change duration
 - **Inline Editing**: Click event titles to edit in place
-- **Multi-User Support**: Secure user authentication and data isolation
-- **Real-time Updates**: Instant visual feedback for all calendar interactions
+- **Recurring Events**: Support for daily, weekly, monthly, and yearly recurrence with RRULE
+- **All-Day Events**: Full support for all-day events
+- **Reminders**: Configurable event reminders
+- **Real-time Sync**: Instant updates across all connected clients
 
 ### AI Assistant "Tilly"
-- **Tool-Based AI**: Advanced Claude integration with custom tools for calendar operations
+- **Tool-Based AI**: OpenAI integration with custom tools for calendar operations
 - **Conflict Detection**: Automatic scheduling conflict resolution
 - **Natural Language**: Understands complex scheduling requests
-- **Timezone Aware**: Handles DST and timezone conversions accurately
-- **Multi-Round Conversations**: Supports follow-up questions and clarifications
+- **Event Management**: Create, move, and delete events via chat
+- **Friends Integration**: Query friends list through AI
 
-### Data & Security
-- **Supabase Backend**: Secure PostgreSQL database with Row Level Security (RLS)
-- **User Authentication**: Email/password and OAuth provider support
-- **Data Isolation**: Users can only access their own calendar events
-- **Input Sanitization**: Protection against XSS and SQL injection
-- **Comprehensive Testing**: Mock and integration test suites
+### Social Features
+- **Friends System**: Add friends by email with request/accept workflow
+- **Meeting Requests**: Propose meeting times to friends with multiple time slots
+- **Shared Calendars**: View friends' calendars (with permission)
 
-### Import/Export
-- **iCal Support**: Import and export calendar events in standard format
-- **Email Invitations**: Send calendar invites via email with iCal attachments
-- **Calendar Subscriptions**: Subscribe to external iCal feeds
+### Calendar Subscriptions
+- **iCal Import**: Subscribe to external iCal feeds (Google Calendar, Outlook, etc.)
+- **Auto-Sync**: Automatic periodic synchronization with external calendars
+- **Calendar Feeds**: Generate iCal feed URLs to share your calendar
+- **Visibility Control**: Show/hide subscribed calendars
+
+### Authentication
+- **Email OTP**: Passwordless login via email one-time codes
+- **Password Auth**: Traditional email/password authentication
+- **Password Reset**: Email-based password reset flow
 
 ## Technology Stack
 
-- **Frontend**: React 18, Vite 5, Modern CSS
-- **Backend**: Node.js 22, Express.js 4
-- **Database**: Supabase (PostgreSQL with real-time features)
-- **Authentication**: Supabase Auth with Row Level Security
-- **AI**: Anthropic Claude API with custom tool integration
-- **Testing**: Jest with comprehensive mock and integration tests
-- **Deployment**: AWS Elastic Beanstalk ready
+- **Frontend**: React 18, Vite 5, TypeScript
+- **Backend**: Convex (serverless functions with real-time sync)
+- **Authentication**: Convex Auth with Resend for email delivery
+- **AI**: OpenAI API with function calling
+- **iCal**: Custom iCal parser for calendar subscriptions
+- **Testing**: Vitest with React Testing Library
+- **Monorepo**: npm workspaces
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 22.x or higher
+- Node.js 18.x or higher
 - npm 8.0.0 or higher
-- Supabase account and project
-- Anthropic API key (for AI features)
+- Convex account
+- OpenAI API key (for AI features)
+- Resend API key (for email authentication)
 
 ### Environment Setup
 
@@ -62,81 +69,70 @@ cd tilly
 npm install
 ```
 
-2. Create a `.env` file in the root directory:
-```env
-# Supabase Configuration (Required)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+2. Set up Convex:
+```bash
+npx convex dev
+```
+This will prompt you to create a Convex project and set up your deployment.
 
-# Anthropic API (Required for AI features)
-ANTHROPIC_API_KEY=sk-ant-your-api-key
-
-# Frontend Environment Variables
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-# Email Configuration (Optional - for calendar invitations)
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
+3. Configure environment variables in the Convex dashboard:
+```
+OPENAI_API_KEY=sk-your-openai-api-key
+AUTH_RESEND_KEY=re_your-resend-api-key
 ```
 
-3. Set up your Supabase database:
-   - Create a new Supabase project
-   - The application will automatically create required tables
-   - Ensure Row Level Security (RLS) is enabled
+4. Create `packages/client/.env.local`:
+```env
+VITE_CONVEX_URL=https://your-deployment.convex.cloud
+```
 
 ### Running the Application
 
-#### Full Stack Development (Recommended)
 ```bash
-# Run both frontend and backend together
-npm run dev:full
+# Run both Convex backend and Vite frontend
+npm run dev
 ```
 
 This starts:
-- Frontend dev server on `http://localhost:3000`
-- Backend API server on `http://localhost:8080`
+- Convex dev server with real-time sync
+- Frontend dev server on `http://localhost:5173`
 
-#### Separate Services
+#### Other Commands
 ```bash
-# Terminal 1: Backend server
-npm run server
+# Run only the frontend
+npm run dev:client
 
-# Terminal 2: Frontend development server
-npm run dev
-```
+# Run only Convex
+npm run dev:convex
 
-#### Frontend Only
-```bash
-# Frontend only (limited AI functionality)
-npm run dev
+# Build for production
+npm run build
+
+# Deploy Convex functions
+npm run deploy
+
+# Type checking
+npm run typecheck
+
+# Linting
+npm run lint
 ```
 
 ## Testing
 
-Tilly includes comprehensive testing infrastructure:
-
-### Test Commands
 ```bash
-# Run all mock tests (fast, no external dependencies)
+# Run all tests
 npm test
 
-# Run integration tests (requires real Supabase connection)
-npm run test:real
+# Run tests once
+npm run test:run
 
-# Run with coverage reporting
+# Run with coverage
 npm run test:coverage
 
-# Watch mode for development
-npm run test:watch
+# Run with UI
+npm run test:ui
 ```
-
-### Test Coverage
-- **Mock Tests**: 36 tests covering business logic, security, and utilities
-- **Integration Tests**: Real database and API endpoint testing
-- **Security Tests**: Input sanitization, authentication, and authorization
-- **Timezone Tests**: DST handling and timezone conversion validation
 
 ## AI Usage Examples
 
@@ -149,100 +145,90 @@ Tilly understands natural language requests:
 "Move my 3pm meeting to 4pm today"
 "Check if I'm free Wednesday at 10am"
 "Cancel my gym session on Monday"
+"Create a weekly standup every Monday at 9am"
+"Add a birthday reminder on March 15 that repeats yearly"
 ```
 
 The AI assistant:
-- Checks for scheduling conflicts
-- Suggests alternative times when conflicts exist
-- Handles timezone conversions automatically
-- Supports follow-up questions and modifications
+- Checks for scheduling conflicts before creating events
+- Supports recurring events with flexible patterns
+- Handles all-day events
+- Can move and delete existing events
 - Provides conversational, helpful responses
-
-## Environment Variables
-
-### Required
-- `SUPABASE_URL` - Your Supabase project URL
-- `SUPABASE_ANON_KEY` - Supabase anonymous key
-- `VITE_SUPABASE_URL` - Frontend Supabase URL
-- `VITE_SUPABASE_ANON_KEY` - Frontend Supabase key
-- `ANTHROPIC_API_KEY` - Anthropic Claude API key
-
-### Optional
-- `SUPABASE_SERVICE_ROLE_KEY` - For advanced database operations
-- `EMAIL_USER` - SMTP email for calendar invitations
-- `EMAIL_PASS` - SMTP password (use app passwords for Gmail)
-- `NODE_ENV` - Set to 'production' for production builds
-- `PORT` - Server port (default: 8080)
-
-## Deployment
-
-### AWS Elastic Beanstalk
-
-1. Build the deployment package:
-```bash
-./create-deployment-zip.sh
-```
-
-2. Upload `tilly-deployment.zip` to Elastic Beanstalk
-
-3. Set environment variables in the EB console
-
-4. Deploy and access your application
-
-The deployment script automatically:
-- Builds the frontend (`npm run build`)
-- Packages all necessary files
-- Includes production configuration
-- Sets up proper Node.js environment
-
-## Security Features
-
-- **Row Level Security**: Database-level access control
-- **User Isolation**: Users can only access their own data
-- **Input Sanitization**: Protection against XSS and injection attacks
-- **Authentication Middleware**: Secure API endpoint protection
-- **Environment Variable Protection**: Sensitive data properly configured
-- **CORS Configuration**: Proper cross-origin request handling
 
 ## Project Structure
 
 ```
 tilly/
-├── src/                          # Frontend React application
-│   ├── components/              # React components
-│   ├── contexts/               # React contexts (Auth)
-│   ├── hooks/                  # Custom React hooks
-│   └── lib/                    # Supabase client configuration
-├── tests/                       # Comprehensive test suites
-│   ├── real-*.test.js          # Integration tests
-│   └── *.test.js               # Mock/unit tests
-├── server.js                    # Express.js backend server
-├── supabase.js                 # Database operations
-├── package.json                # Dependencies and scripts
-└── create-deployment-zip.sh    # Deployment packaging script
+├── packages/
+│   ├── client/                  # React frontend application
+│   │   ├── src/
+│   │   │   ├── components/     # React components
+│   │   │   │   ├── Auth/       # Authentication modal
+│   │   │   │   ├── Calendar/   # Calendar grid and events
+│   │   │   │   ├── Chat/       # AI chat interface
+│   │   │   │   ├── EventModal/ # Event creation/editing
+│   │   │   │   └── Settings/   # User settings tabs
+│   │   │   ├── contexts/       # React contexts (Auth)
+│   │   │   ├── hooks/          # Custom React hooks
+│   │   │   └── utils/          # Utility functions
+│   │   └── package.json
+│   └── shared/                  # Shared types and constants
+│       ├── src/
+│       │   ├── types/          # TypeScript type definitions
+│       │   └── constants/      # Shared constants
+│       └── package.json
+├── convex/                      # Convex backend
+│   ├── _generated/             # Auto-generated Convex files
+│   ├── ai/                     # AI chat actions and tools
+│   ├── events/                 # Event queries and mutations
+│   ├── feeds/                  # Calendar feed management
+│   ├── friends/                # Friends system
+│   ├── ical/                   # iCal parser and actions
+│   ├── meetings/               # Meeting requests
+│   ├── subscriptions/          # Calendar subscriptions
+│   ├── users/                  # User management
+│   ├── auth.ts                 # Authentication config
+│   ├── crons.ts                # Scheduled tasks
+│   ├── http.ts                 # HTTP endpoints (iCal feeds)
+│   └── schema.ts               # Database schema
+└── package.json                # Root package with workspaces
 ```
 
-## API Documentation
+## Database Schema
 
-### Authentication Required Endpoints
-- `GET /api/events` - Get user's calendar events
-- `POST /api/events` - Create new event
-- `PUT /api/events/:id` - Update existing event
-- `DELETE /api/events/:id` - Delete event
-- `POST /api/ai/chat` - AI chat with calendar tools
-- `POST /api/tools/*` - Calendar tool endpoints
+### Core Tables
+- **events**: Calendar events with recurrence support
+- **calendarSubscriptions**: External iCal feed subscriptions
+- **calendarFeedTokens**: Tokens for sharing calendar as iCal feed
+- **friendships**: Friend relationships
+- **friendRequests**: Pending friend requests
+- **meetingRequests**: Meeting proposals between friends
 
-### Public Endpoints
-- `GET /health` - Health check
-- `POST /api/auth/*` - Authentication endpoints
+## Deployment
+
+### Vercel (Frontend)
+
+The client package includes `vercel.json` for deployment:
+
+```bash
+cd packages/client
+vercel
+```
+
+### Convex (Backend)
+
+```bash
+npm run deploy
+```
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Run the test suite: `npm test && npm run test:real`
+3. Run the test suite: `npm test`
 4. Make your changes
-5. Ensure all tests pass
+5. Ensure all tests pass and types check: `npm run typecheck`
 6. Submit a pull request
 
 ## License

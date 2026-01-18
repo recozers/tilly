@@ -241,8 +241,8 @@ export const listForUser = internalQuery({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
 
-    // If includePrivate is false, filter out private events or mark them as "Busy"
-    // For now, return all events (includePrivate handling can be added later)
-    return events;
+    // Filter out events from external calendars to prevent circular sync
+    // Events with sourceCalendarId came from subscriptions and should not be re-exported
+    return events.filter((event) => !event.sourceCalendarId);
   },
 });

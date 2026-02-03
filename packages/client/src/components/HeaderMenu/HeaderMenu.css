@@ -94,3 +94,40 @@
   background: var(--oak-300);
   margin: 6px 8px;
 }
+
+/* Dark Mode Overrides */
+[data-theme="dark"] .header-menu-button {
+  background: var(--oak-200);
+  border-color: var(--oak-400);
+  box-shadow: 3px 3px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .header-menu-button:hover {
+  background: var(--oak-300);
+}
+
+[data-theme="dark"] .header-menu-button svg {
+  stroke: var(--bamboo-600);
+}
+
+[data-theme="dark"] .header-menu-dropdown {
+  background: var(--bamboo-100);
+  border-color: var(--oak-400);
+  box-shadow: 4px 4px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .header-menu-item {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .header-menu-item:hover {
+  background: var(--oak-200);
+}
+
+[data-theme="dark"] .header-menu-item svg {
+  stroke: var(--bamboo-600);
+}
+
+[data-theme="dark"] .header-menu-divider {
+  background: var(--oak-400);
+}

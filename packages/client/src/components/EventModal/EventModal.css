@@ -539,3 +539,103 @@
 .reminder-add-select {
   max-width: 200px;
 }
+
+/* Dark Mode Overrides */
+[data-theme="dark"] .event-modal {
+  background: var(--gray-100);
+}
+
+[data-theme="dark"] .event-modal-header {
+  background: linear-gradient(180deg, var(--gray-200) 0%, var(--gray-100) 100%);
+  border-bottom-color: var(--gray-300);
+}
+
+[data-theme="dark"] .event-modal-header h2 {
+  color: var(--gray-800);
+}
+
+[data-theme="dark"] .event-modal-close {
+  background: var(--gray-200);
+  color: var(--gray-500);
+}
+
+[data-theme="dark"] .event-modal-close:hover {
+  background: var(--gray-300);
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .event-modal .form-group label {
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .event-modal .form-group input,
+[data-theme="dark"] .event-modal .form-group textarea {
+  background: var(--gray-200);
+  border-color: var(--gray-300);
+  color: var(--gray-800);
+}
+
+[data-theme="dark"] .event-modal .form-group input:hover,
+[data-theme="dark"] .event-modal .form-group textarea:hover {
+  border-color: var(--gray-400);
+}
+
+[data-theme="dark"] .event-modal .form-group input:focus,
+[data-theme="dark"] .event-modal .form-group textarea:focus {
+  background: var(--gray-200);
+  border-color: var(--primary-500);
+}
+
+[data-theme="dark"] .event-modal .form-group input::placeholder,
+[data-theme="dark"] .event-modal .form-group textarea::placeholder {
+  color: var(--gray-500);
+}
+
+[data-theme="dark"] .color-picker {
+  background: var(--gray-200);
+}
+
+[data-theme="dark"] .event-modal-actions {
+  border-top-color: var(--gray-300);
+}
+
+[data-theme="dark"] .btn-cancel {
+  border-color: var(--gray-300);
+  color: var(--gray-600);
+}
+
+[data-theme="dark"] .btn-cancel:hover:not(:disabled) {
+  background: var(--gray-200);
+  border-color: var(--gray-400);
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .form-select,
+[data-theme="dark"] .reminder-add-select {
+  background-color: var(--gray-200);
+  border-color: var(--gray-300);
+  color: var(--gray-800);
+}
+
+[data-theme="dark"] .form-select:hover,
+[data-theme="dark"] .reminder-add-select:hover {
+  border-color: var(--gray-400);
+}
+
+[data-theme="dark"] .form-select:focus,
+[data-theme="dark"] .reminder-add-select:focus {
+  background-color: var(--gray-200);
+  border-color: var(--primary-500);
+}
+
+[data-theme="dark"] .checkbox-label span {
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .event-modal::-webkit-scrollbar-thumb {
+  background: var(--gray-400);
+}
+
+[data-theme="dark"] .event-modal::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-500);
+}

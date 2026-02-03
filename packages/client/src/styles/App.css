@@ -104,6 +104,201 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Dark Mode Theme */
+[data-theme="dark"] {
+  /* Forest Green - Darker, richer variants */
+  --forest-50: #0d1f1a;
+  --forest-100: #132e25;
+  --forest-200: #1a4033;
+  --forest-300: #245542;
+  --forest-400: #2e7d32;
+  --forest-500: #4caf50;
+  --forest-600: #81c784;
+  --forest-700: #a5d6a7;
+
+  /* Bamboo/Cream - Inverted to dark neutrals */
+  --bamboo-50: #1a1917;
+  --bamboo-100: #242320;
+  --bamboo-200: #2e2d29;
+  --bamboo-300: #3d3b35;
+  --bamboo-400: #4d4a42;
+  --bamboo-500: #6b6557;
+  --bamboo-600: #8a8274;
+  --bamboo-700: #a89f91;
+
+  /* Oak - Warmer dark tones */
+  --oak-50: #1f1a14;
+  --oak-100: #2a231a;
+  --oak-200: #3d3126;
+  --oak-300: #524433;
+  --oak-400: #6b5842;
+  --oak-500: #8b6914;
+  --oak-600: #c4a57b;
+  --oak-700: #d4b896;
+
+  /* Earth - Rich dark browns */
+  --earth-50: #1a1614;
+  --earth-100: #252019;
+  --earth-200: #332c24;
+  --earth-300: #4a3f33;
+  --earth-400: #5d4f42;
+  --earth-500: #8b7355;
+  --earth-600: #b8a089;
+  --earth-700: #d4c4b0;
+
+  /* Primary - Follows forest */
+  --primary-50: var(--forest-50);
+  --primary-100: var(--forest-100);
+  --primary-200: var(--forest-200);
+  --primary-300: var(--forest-300);
+  --primary-400: var(--forest-400);
+  --primary-500: var(--forest-500);
+  --primary-600: var(--forest-600);
+  --primary-700: var(--forest-700);
+  --primary-800: #c8e6c9;
+  --primary-900: #e8f5e9;
+
+  /* Neutral Colors - Inverted */
+  --gray-50: #111827;
+  --gray-100: #1f2937;
+  --gray-200: #374151;
+  --gray-300: #4b5563;
+  --gray-400: #6b7280;
+  --gray-500: #9ca3af;
+  --gray-600: #d1d5db;
+  --gray-700: #e5e7eb;
+  --gray-800: #f3f4f6;
+  --gray-900: #f9fafb;
+
+  /* Accent Colors - Slightly adjusted for dark backgrounds */
+  --accent-blue: #60a5fa;
+  --accent-purple: #a78bfa;
+  --accent-pink: #f472b6;
+  --accent-orange: #fb923c;
+  --accent-red: #f87171;
+  --accent-teal: #2dd4bf;
+
+  /* Semantic Colors - Brighter for dark mode */
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --info: #60a5fa;
+
+  /* Shadows - Adjusted for dark backgrounds */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Dark mode body background */
+[data-theme="dark"] body {
+  background: #0d1612;
+  color: var(--bamboo-700);
+}
+
+[data-theme="dark"] .loading-container {
+  background: #0d1612;
+}
+
+[data-theme="dark"] .loading-container p {
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .loading-spinner {
+  border-color: var(--primary-300);
+  border-top-color: var(--primary-500);
+}
+
+/* Dark mode specific overrides */
+[data-theme="dark"] .app-header {
+  background: var(--bamboo-100);
+  border-bottom-color: var(--oak-400);
+}
+
+[data-theme="dark"] .app-logo {
+  color: var(--forest-600);
+}
+
+[data-theme="dark"] .user-email {
+  background: var(--oak-200);
+  border-color: var(--oak-400);
+  color: var(--earth-700);
+}
+
+[data-theme="dark"] .calendar-section {
+  background: var(--bamboo-100);
+  border-color: var(--oak-400);
+  box-shadow: 6px 6px 0 var(--oak-200);
+}
+
+[data-theme="dark"] .chat-section {
+  background: var(--forest-100);
+  border-color: var(--forest-400);
+  box-shadow: 6px 6px 0 var(--forest-200);
+}
+
+[data-theme="dark"] .auth-modal {
+  background: var(--gray-100);
+}
+
+[data-theme="dark"] .auth-modal h2 {
+  color: var(--gray-800);
+}
+
+[data-theme="dark"] .form-group label {
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .form-group input {
+  background: var(--gray-200);
+  border-color: var(--gray-300);
+  color: var(--gray-800);
+}
+
+[data-theme="dark"] .form-group input:focus {
+  background: var(--gray-200);
+  border-color: var(--primary-500);
+}
+
+[data-theme="dark"] .btn-google {
+  background: var(--gray-200);
+  border-color: var(--gray-300);
+  color: var(--gray-700);
+}
+
+[data-theme="dark"] .btn-google:hover {
+  background: var(--gray-300);
+}
+
+[data-theme="dark"] .auth-toggle {
+  color: var(--gray-500);
+}
+
+[data-theme="dark"] .auth-divider {
+  color: var(--earth-600);
+}
+
+[data-theme="dark"] .auth-divider::before,
+[data-theme="dark"] .auth-divider::after {
+  background: var(--oak-400);
+}
+
+/* Dark mode scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--gray-400);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-500);
+}
+
+/* Dark mode selection */
+[data-theme="dark"] ::selection {
+  background: var(--primary-400);
+  color: var(--gray-900);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

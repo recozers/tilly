@@ -483,6 +483,95 @@
   gap: 2px;
 }
 
+/* Dark Mode Overrides */
+[data-theme="dark"] .calendar-grid-wrapper {
+  background: var(--bamboo-100);
+  border-color: var(--oak-400);
+  box-shadow: 4px 4px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .calendar-time-column {
+  background: var(--oak-200);
+  border-right-color: var(--oak-400);
+}
+
+[data-theme="dark"] .calendar-time-header {
+  background: var(--oak-200);
+}
+
+[data-theme="dark"] .calendar-time-label {
+  color: var(--bamboo-600);
+  background: var(--oak-200);
+}
+
+[data-theme="dark"] .calendar-time-slot {
+  border-bottom-color: var(--oak-400);
+}
+
+[data-theme="dark"] .calendar-time-allday {
+  background: var(--oak-200);
+  border-bottom-color: var(--oak-400);
+}
+
+[data-theme="dark"] .calendar-time-allday-label {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .calendar-day-header {
+  background: var(--bamboo-200);
+  border-bottom-color: var(--bamboo-400);
+  border-right-color: var(--bamboo-400);
+}
+
+[data-theme="dark"] .calendar-day-name {
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .calendar-day-number {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .calendar-day-body {
+  border-right-color: var(--bamboo-400);
+}
+
+[data-theme="dark"] .calendar-day-body.is-today {
+  background: var(--forest-100);
+}
+
+[data-theme="dark"] .calendar-hour-slot {
+  border-bottom-color: var(--bamboo-300);
+}
+
+[data-theme="dark"] .calendar-hour-slot:hover {
+  background: var(--bamboo-200);
+}
+
+[data-theme="dark"] .calendar-hour-slot:active {
+  background: var(--bamboo-300);
+}
+
+[data-theme="dark"] .calendar-hour-slot.current-hour {
+  background: var(--forest-200);
+}
+
+[data-theme="dark"] .calendar-title {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .calendar-allday-cell {
+  background: var(--bamboo-100);
+  border-right-color: var(--bamboo-400);
+}
+
+[data-theme="dark"] .calendar-allday-cell.is-today {
+  background: var(--forest-100);
+}
+
+[data-theme="dark"] .calendar-allday-row {
+  border-bottom-color: var(--bamboo-400);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .calendar-time-column {

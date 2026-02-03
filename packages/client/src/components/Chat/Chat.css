@@ -575,6 +575,109 @@
   background: var(--forest-400);
 }
 
+/* Dark Mode Overrides */
+[data-theme="dark"] .chat-title {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .chat-status {
+  background: var(--forest-200);
+  border-color: var(--forest-400);
+}
+
+[data-theme="dark"] .status-text {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .chat-empty h3 {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .chat-empty p {
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .chat-empty ul {
+  background: var(--bamboo-200);
+  border-color: var(--oak-400);
+}
+
+[data-theme="dark"] .chat-empty li {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .chat-empty li:hover {
+  background: var(--bamboo-100);
+  color: var(--forest-500);
+}
+
+[data-theme="dark"] .message-sender {
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .message-text {
+  background: var(--bamboo-200);
+  color: var(--bamboo-700);
+  border-color: var(--oak-400);
+  box-shadow: 3px 3px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .chat-message.assistant .message-text {
+  background: var(--bamboo-100);
+  border-color: var(--forest-400);
+  box-shadow: 3px 3px 0 var(--forest-300);
+}
+
+[data-theme="dark"] .created-event {
+  background: var(--bamboo-100);
+  border-color: var(--oak-400);
+  box-shadow: 3px 3px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .event-title {
+  color: var(--bamboo-700);
+}
+
+[data-theme="dark"] .event-time {
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .chat-input {
+  background: var(--bamboo-100);
+  color: var(--bamboo-700);
+  border-color: var(--oak-400);
+  box-shadow: 3px 3px 0 var(--oak-300);
+}
+
+[data-theme="dark"] .chat-input::placeholder {
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .chat-input:focus {
+  border-color: var(--forest-500);
+  box-shadow: 4px 4px 0 var(--forest-400);
+}
+
+[data-theme="dark"] .chat-input:disabled {
+  background: var(--bamboo-200);
+  color: var(--bamboo-500);
+}
+
+[data-theme="dark"] .tool-call {
+  background: var(--oak-200);
+  border-color: var(--oak-400);
+  color: var(--bamboo-600);
+}
+
+[data-theme="dark"] .chat-messages::-webkit-scrollbar-track {
+  background: var(--forest-100);
+}
+
+[data-theme="dark"] .chat-messages::-webkit-scrollbar-thumb {
+  background: var(--forest-400);
+  border-color: var(--forest-100);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .chat-header {

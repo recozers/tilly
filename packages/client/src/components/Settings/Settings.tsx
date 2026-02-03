@@ -3,9 +3,10 @@ import { ProfileTab } from './ProfileTab.js';
 import { FriendsTab } from './FriendsTab.js';
 import { SubscriptionsTab } from './SubscriptionsTab.js';
 import { SharingTab } from './SharingTab.js';
+import { AppearanceTab } from './AppearanceTab.js';
 import './Settings.css';
 
-export type TabId = 'profile' | 'friends' | 'subscriptions' | 'sharing';
+export type TabId = 'profile' | 'friends' | 'subscriptions' | 'sharing' | 'appearance';
 
 interface SettingsProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ const TABS: Tab[] = [
   { id: 'friends', label: 'Friends', icon: '👥' },
   { id: 'subscriptions', label: 'Calendars', icon: '📅' },
   { id: 'sharing', label: 'Sharing', icon: '🔗' },
+  { id: 'appearance', label: 'Appearance', icon: '🎨' },
 ];
 
 export function Settings({ isOpen, onClose, initialTab = 'friends' }: SettingsProps): JSX.Element | null {
@@ -72,6 +74,7 @@ export function Settings({ isOpen, onClose, initialTab = 'friends' }: SettingsPr
           {activeTab === 'friends' && <FriendsTab />}
           {activeTab === 'subscriptions' && <SubscriptionsTab />}
           {activeTab === 'sharing' && <SharingTab />}
+          {activeTab === 'appearance' && <AppearanceTab />}
         </div>
       </div>
     </div>

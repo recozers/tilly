@@ -74,21 +74,30 @@
   display: flex;
   gap: 4px;
   flex: 1;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.settings-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .settings-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 10px 12px;
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--gray-600);
   transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .settings-tab:hover {
@@ -1248,11 +1257,13 @@
 
 /* Dark mode for theme options */
 [data-theme="dark"] .theme-option {
-  background: var(--gray-200);
+  background: transparent;
+  border-color: var(--gray-300);
 }
 
 [data-theme="dark"] .theme-option:hover {
-  background: var(--gray-300);
+  background: var(--gray-200);
+  border-color: var(--gray-400);
 }
 
 [data-theme="dark"] .theme-option.selected {

@@ -14,7 +14,6 @@ export function Chat({ onEventCreated }: ChatProps): JSX.Element {
     isLoading,
     error,
     sendMessage,
-    clearHistory,
   } = useChat();
 
   // With fetch-based streaming, we're always "connected"
@@ -59,22 +58,6 @@ export function Chat({ onEventCreated }: ChatProps): JSX.Element {
     <div className="chat">
       <div className="chat-header">
         <h2 className="chat-title">Chat with Tilly</h2>
-        <div className="chat-status">
-          <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`} />
-          <span className="status-text">
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </span>
-        </div>
-        {messages.length > 0 && (
-          <button
-            className="chat-clear-btn"
-            onClick={clearHistory}
-            disabled={isStreaming}
-            aria-label="Clear chat history"
-          >
-            Clear
-          </button>
-        )}
       </div>
 
       <div className="chat-messages">

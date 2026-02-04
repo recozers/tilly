@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import './HeaderMenu.css';
 
-export type MenuTab = 'profile' | 'friends' | 'subscriptions' | 'sharing';
+export type MenuTab = 'profile' | 'friends' | 'subscriptions' | 'sharing' | 'appearance';
 
 interface HeaderMenuProps {
   onOpenTab: (tab: MenuTab) => void;
@@ -98,6 +98,14 @@ export function HeaderMenu({ onOpenTab, onSignOut }: HeaderMenuProps): JSX.Eleme
           >
             <span className="menu-item-icon">🔗</span>
             <span>Sharing</span>
+          </button>
+
+          <button
+            className="header-menu-item"
+            onClick={() => handleItemClick(() => onOpenTab('appearance'))}
+          >
+            <span className="menu-item-icon">🎨</span>
+            <span>Appearance</span>
           </button>
 
           <div className="header-menu-divider" />

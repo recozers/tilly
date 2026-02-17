@@ -333,8 +333,9 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
 
     // Calculate vertical position (with snapping to 15-min intervals)
-    const scrollTop = scrollContainerRef.current?.scrollTop || 0;
-    const relativeY = e.clientY - rect.top + scrollTop;
+    // getBoundingClientRect() returns viewport-relative coords, which already
+    // accounts for the scroll offset of the parent container, so no need to add scrollTop.
+    const relativeY = e.clientY - rect.top;
     const rawMinutes = (relativeY / HOUR_HEIGHT) * 60;
     const snappedMinutes = Math.round(rawMinutes / 15) * 15; // Snap to 15-min
     const top = (snappedMinutes / 60) * HOUR_HEIGHT;

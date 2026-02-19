@@ -293,9 +293,9 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     event: CalendarEvent,
     dayIndex: number
   ) => {
-    // Don't start drag if clicking on recurring instance (edit original instead)
-    // Or if no drop handler provided
-    if (!onEventDrop) return;
+    // Don't start drag on recurring instances (no exception support yet)
+    // or if no drop handler provided
+    if (!onEventDrop || event.isRecurringInstance) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -410,7 +410,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     event: CalendarEvent,
     dayIndex: number
   ) => {
-    if (!onEventDrop) return;
+    if (!onEventDrop || event.isRecurringInstance) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -573,7 +573,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
                               backgroundColor: event.color,
                               top: `${eventIndex * 26 + 2}px`,
                               opacity: isDragging ? 0.5 : 1,
-                              cursor: onEventDrop ? 'grab' : 'pointer',
+                              cursor: onEventDrop && !event.isRecurringInstance ? 'grab' : 'pointer',
                             }}
                             onClick={() => !allDayDragState && onEventClick?.(event)}
                             onMouseDown={(e) => handleAllDayDragStart(e, event, dayIndex)}
@@ -652,7 +652,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
                               width: `calc(${event.width}% - 4px)`,
                               zIndex: isDragging ? 1000 : event.zIndex,
                               opacity: isDragging ? 0.5 : 1,
-                              cursor: onEventDrop ? 'grab' : 'pointer',
+                              cursor: onEventDrop && !event.isRecurringInstance ? 'grab' : 'pointer',
                             }}
                             onClick={() => !dragState && onEventClick?.(event)}
                             onMouseDown={(e) => handleDragStart(e, event, dayIndex)}

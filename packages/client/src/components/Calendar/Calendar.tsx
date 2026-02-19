@@ -347,19 +347,30 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     setDragPreview({ dayIndex, top: clampedTop });
   }, [dragState]);
 
-  const handleDragEnd = useCallback((_e: MouseEvent) => {
-    if (!dragState || !dragPreview || !onEventDrop || !dayBodiesRef.current) {
+  const handleDragEnd = useCallback((e: MouseEvent) => {
+    if (!dragState || !onEventDrop || !dayBodiesRef.current) {
       setDragState(null);
       setDragPreview(null);
       return;
     }
 
-    // Calculate new times
-    const newDay = weekDays[dragPreview.dayIndex];
-    const newMinutes = (dragPreview.top / HOUR_HEIGHT) * 60;
-    const newHours = Math.floor(newMinutes / 60);
-    const newMins = Math.round(newMinutes % 60);
+    // Calculate drop position directly from the mouseup event
+    // (reading from dragPreview state can be stale due to React's async effect scheduling)
+    const rect = dayBodiesRef.current.getBoundingClientRect();
+    const dayWidth = rect.width / DAYS_IN_WEEK;
+    const relativeX = e.clientX - rect.left;
+    const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
 
+    const scrollTop = scrollContainerRef.current?.scrollTop || 0;
+    const relativeY = e.clientY - rect.top + scrollTop;
+    const rawMinutes = (relativeY / HOUR_HEIGHT) * 60;
+    const snappedMinutes = Math.round(rawMinutes / 15) * 15;
+    const clampedMinutes = Math.max(0, Math.min(24 * 60 - dragState.duration / 60000, snappedMinutes));
+
+    const newHours = Math.floor(clampedMinutes / 60);
+    const newMins = Math.round(clampedMinutes % 60);
+
+    const newDay = weekDays[dayIndex];
     const newStart = new Date(newDay);
     newStart.setHours(newHours, newMins, 0, 0);
     const newStartTime = newStart.getTime();
@@ -374,7 +385,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
 
     setDragState(null);
     setDragPreview(null);
-  }, [dragState, dragPreview, onEventDrop, weekDays]);
+  }, [dragState, onEventDrop, weekDays]);
 
   // Global mouse event listeners for timed event dragging
   useEffect(() => {
@@ -426,15 +437,21 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     setAllDayDragPreview(dayIndex);
   }, [allDayDragState]);
 
-  const handleAllDayDragEnd = useCallback((_e: MouseEvent) => {
-    if (!allDayDragState || allDayDragPreview === null || !onEventDrop) {
+  const handleAllDayDragEnd = useCallback((e: MouseEvent) => {
+    if (!allDayDragState || !onEventDrop || !allDayRowRef.current) {
       setAllDayDragState(null);
       setAllDayDragPreview(null);
       return;
     }
 
+    // Calculate drop day directly from the mouseup event
+    const rect = allDayRowRef.current.getBoundingClientRect();
+    const dayWidth = rect.width / DAYS_IN_WEEK;
+    const relativeX = e.clientX - rect.left;
+    const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
+
     // Calculate day difference
-    const dayDiff = allDayDragPreview - allDayDragState.startDayIndex;
+    const dayDiff = dayIndex - allDayDragState.startDayIndex;
 
     if (dayDiff !== 0) {
       // Shift both start and end by the same number of days
@@ -448,7 +465,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
 
     setAllDayDragState(null);
     setAllDayDragPreview(null);
-  }, [allDayDragState, allDayDragPreview, onEventDrop]);
+  }, [allDayDragState, onEventDrop]);
 
   // Global mouse event listeners for all-day dragging
   useEffect(() => {

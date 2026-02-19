@@ -44,6 +44,7 @@ interface UpdateEventDto {
   allDay?: boolean;
   timezone?: string;
   reminders?: number[];
+  dtstart?: number;
 }
 
 interface UseEventsReturn {
@@ -53,6 +54,7 @@ interface UseEventsReturn {
   createEvent: (dto: CreateEventDto) => Promise<any>;
   updateEvent: (id: Id<"events">, dto: UpdateEventDto) => Promise<any>;
   deleteEvent: (id: Id<"events">) => Promise<void>;
+  addExdateAndCreateException: (parentEventId: Id<"events">, excludedStartTime: number, newStartTime: number, newEndTime: number) => Promise<void>;
   refetch: () => void;
 }
 
@@ -70,6 +72,7 @@ export function useEvents(): UseEventsReturn {
   const createMutation = useMutation(api.events.mutations.create);
   const updateMutation = useMutation(api.events.mutations.update);
   const deleteMutation = useMutation(api.events.mutations.remove);
+  const addExdateMutation = useMutation(api.events.mutations.addExdateAndCreateException);
 
   // Build a set of hidden subscription IDs for fast lookup
   const hiddenSubscriptionIds = useMemo(() => {
@@ -125,6 +128,20 @@ export function useEvents(): UseEventsReturn {
     await deleteMutation({ id });
   }, [deleteMutation]);
 
+  const addExdateAndCreateException = useCallback(async (
+    parentEventId: Id<"events">,
+    excludedStartTime: number,
+    newStartTime: number,
+    newEndTime: number,
+  ) => {
+    await addExdateMutation({
+      parentEventId,
+      excludedStartTime,
+      newStartTime,
+      newEndTime,
+    });
+  }, [addExdateMutation]);
+
   // No need to manually refetch - Convex handles real-time updates
   const refetch = useCallback(() => {
     // No-op - Convex automatically keeps data in sync
@@ -137,6 +154,7 @@ export function useEvents(): UseEventsReturn {
     createEvent,
     updateEvent,
     deleteEvent,
+    addExdateAndCreateException,
     refetch,
   };
 }

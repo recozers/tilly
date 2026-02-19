@@ -20,6 +20,7 @@ export default defineSchema({
     rrule: v.optional(v.string()),
     dtstart: v.optional(v.number()),
     duration: v.optional(v.number()),
+    exdates: v.optional(v.array(v.number())), // Excluded occurrence timestamps (ms) for recurring events
     allDay: v.optional(v.boolean()),
     meetingRequestId: v.optional(v.id("meetingRequests")),
     // Reminders: array of minutes before event to remind (e.g., [15, 60] = 15min and 1hr before)

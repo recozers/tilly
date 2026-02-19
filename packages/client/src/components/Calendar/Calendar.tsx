@@ -27,7 +27,7 @@ interface CalendarProps {
   events: CalendarEvent[];
   onEventClick?: (event: CalendarEvent) => void;
   onTimeSlotClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newStartTime: number, newEndTime: number) => void;
+  onEventDrop?: (eventId: string, newStartTime: number, newEndTime: number, isRecurringInstance?: boolean, originalEventId?: string, originalStartTime?: number) => void;
 }
 
 // Drag state tracking for timed events
@@ -293,9 +293,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     event: CalendarEvent,
     dayIndex: number
   ) => {
-    // Don't start drag on recurring instances (no exception support yet)
-    // or if no drop handler provided
-    if (!onEventDrop || event.isRecurringInstance) return;
+    if (!onEventDrop) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -378,9 +376,13 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
 
     // Only update if actually moved
     if (newStartTime !== dragState.originalStartTime) {
-      // Use original event ID for recurring instances
       const idToUpdate = dragState.originalEventId || dragState.eventId;
-      onEventDrop(idToUpdate, newStartTime, newEndTime);
+      onEventDrop(
+        idToUpdate, newStartTime, newEndTime,
+        !!dragState.originalEventId,
+        dragState.originalEventId,
+        dragState.originalStartTime,
+      );
     }
 
     setDragState(null);
@@ -410,7 +412,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     event: CalendarEvent,
     dayIndex: number
   ) => {
-    if (!onEventDrop || event.isRecurringInstance) return;
+    if (!onEventDrop) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -460,7 +462,12 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
       const newEndTime = allDayDragState.originalEndTime + (dayDiff * msPerDay);
 
       const idToUpdate = allDayDragState.originalEventId || allDayDragState.eventId;
-      onEventDrop(idToUpdate, newStartTime, newEndTime);
+      onEventDrop(
+        idToUpdate, newStartTime, newEndTime,
+        !!allDayDragState.originalEventId,
+        allDayDragState.originalEventId,
+        allDayDragState.originalStartTime,
+      );
     }
 
     setAllDayDragState(null);
@@ -573,7 +580,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
                               backgroundColor: event.color,
                               top: `${eventIndex * 26 + 2}px`,
                               opacity: isDragging ? 0.5 : 1,
-                              cursor: onEventDrop && !event.isRecurringInstance ? 'grab' : 'pointer',
+                              cursor: onEventDrop ? 'grab' : 'pointer',
                             }}
                             onClick={() => !allDayDragState && onEventClick?.(event)}
                             onMouseDown={(e) => handleAllDayDragStart(e, event, dayIndex)}
@@ -652,7 +659,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
                               width: `calc(${event.width}% - 4px)`,
                               zIndex: isDragging ? 1000 : event.zIndex,
                               opacity: isDragging ? 0.5 : 1,
-                              cursor: onEventDrop && !event.isRecurringInstance ? 'grab' : 'pointer',
+                              cursor: onEventDrop ? 'grab' : 'pointer',
                             }}
                             onClick={() => !dragState && onEventClick?.(event)}
                             onMouseDown={(e) => handleDragStart(e, event, dayIndex)}

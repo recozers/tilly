@@ -68,6 +68,7 @@ export const update = mutation({
     allDay: v.optional(v.boolean()),
     timezone: v.optional(v.string()),
     reminders: v.optional(v.array(v.number())),
+    dtstart: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -91,6 +92,7 @@ export const update = mutation({
       timezone: string;
       reminders: number[];
       remindersSent: number[];
+      dtstart: number;
     }> = {};
 
     if (args.title !== undefined) updates.title = args.title;
@@ -110,9 +112,48 @@ export const update = mutation({
       // Reset sent reminders when reminders change
       updates.remindersSent = [];
     }
+    if (args.dtstart !== undefined) updates.dtstart = args.dtstart;
 
     await ctx.db.patch(args.id, updates);
     return await ctx.db.get(args.id);
+  },
+});
+
+/**
+ * Move a single recurring instance: exclude it from the parent and create a standalone copy
+ */
+export const addExdateAndCreateException = mutation({
+  args: {
+    parentEventId: v.id("events"),
+    excludedStartTime: v.number(),
+    newStartTime: v.number(),
+    newEndTime: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const parent = await ctx.db.get(args.parentEventId);
+    if (!parent || parent.userId !== userId) throw new Error("Event not found");
+
+    // Add exdate to parent
+    const exdates = parent.exdates ?? [];
+    exdates.push(args.excludedStartTime);
+    await ctx.db.patch(args.parentEventId, { exdates });
+
+    // Create standalone exception event (no rrule)
+    await ctx.db.insert("events", {
+      userId,
+      title: parent.title,
+      startTime: args.newStartTime,
+      endTime: args.newEndTime,
+      color: parent.color,
+      description: parent.description,
+      location: parent.location,
+      allDay: parent.allDay,
+      timezone: parent.timezone,
+      reminders: parent.reminders,
+    });
   },
 });
 

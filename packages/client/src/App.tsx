@@ -57,7 +57,7 @@ interface UpdateEventData {
  */
 export default function App(): JSX.Element {
   const { user, isLoading: authLoading, isAuthenticated, signOut } = useAuthContext();
-  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, refetch } = useEvents();
+  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, addExdateAndCreateException, refetch } = useEvents();
 
   // Modal state
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -97,12 +97,46 @@ export default function App(): JSX.Element {
   }, [deleteEvent]);
 
   // Handle drag-and-drop event reschedule
-  const handleEventDrop = useCallback(async (eventId: string, newStartTime: number, newEndTime: number) => {
-    await updateEvent(eventId as Id<"events">, {
-      startTime: newStartTime,
-      endTime: newEndTime,
-    });
-  }, [updateEvent]);
+  const handleEventDrop = useCallback(async (
+    eventId: string,
+    newStartTime: number,
+    newEndTime: number,
+    isRecurringInstance?: boolean,
+    originalEventId?: string,
+    originalStartTime?: number,
+  ) => {
+    if (isRecurringInstance && originalEventId && originalStartTime !== undefined) {
+      const editAll = window.confirm(
+        'Move all events in this series?\n\nOK = All events\nCancel = This event only'
+      );
+
+      if (editAll) {
+        // Shift entire recurrence by the same delta
+        const delta = newStartTime - originalStartTime;
+        const parentEvent = events.find(e => e._id === originalEventId);
+        if (parentEvent) {
+          await updateEvent(originalEventId as Id<"events">, {
+            startTime: parentEvent.startTime + delta,
+            endTime: parentEvent.endTime + delta,
+            dtstart: (parentEvent.startTime + delta),
+          });
+        }
+      } else {
+        // Move this instance only: exclude from parent + create standalone copy
+        await addExdateAndCreateException(
+          originalEventId as Id<"events">,
+          originalStartTime,
+          newStartTime,
+          newEndTime,
+        );
+      }
+    } else {
+      await updateEvent(eventId as Id<"events">, {
+        startTime: newStartTime,
+        endTime: newEndTime,
+      });
+    }
+  }, [updateEvent, addExdateAndCreateException, events]);
 
   // Close modal
   const handleCloseModal = useCallback(() => {

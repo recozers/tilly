@@ -12,6 +12,7 @@ interface BaseEvent {
   rrule?: string;
   dtstart?: number;
   duration?: number;
+  exdates?: number[];
 }
 
 interface ExpandedEvent extends Omit<BaseEvent, 'rrule' | 'dtstart' | 'duration'> {
@@ -49,9 +50,11 @@ export function expandRecurringEvents<T extends BaseEvent>(
       const bufferStart = new Date(startDate.getTime() - duration);
       const occurrences = rule.between(bufferStart, endDate, true);
       const limitedOccurrences = occurrences.slice(0, 100);
+      const exdateSet = new Set(event.exdates ?? []);
 
       for (let i = 0; i < limitedOccurrences.length; i++) {
         const occStart = limitedOccurrences[i];
+        if (exdateSet.has(occStart.getTime())) continue;
         const occEnd = new Date(occStart.getTime() + duration);
 
         const expandedEvent = {

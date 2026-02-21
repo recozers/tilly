@@ -359,8 +359,8 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
     const relativeX = e.clientX - rect.left;
     const dayIndex = Math.max(0, Math.min(DAYS_IN_WEEK - 1, Math.floor(relativeX / dayWidth)));
 
-    const scrollTop = scrollContainerRef.current?.scrollTop || 0;
-    const relativeY = e.clientY - rect.top + scrollTop;
+    // getBoundingClientRect() already accounts for scroll offset, no need to add scrollTop
+    const relativeY = e.clientY - rect.top;
     const rawMinutes = (relativeY / HOUR_HEIGHT) * 60;
     const snappedMinutes = Math.round(rawMinutes / 15) * 15;
     const clampedMinutes = Math.max(0, Math.min(24 * 60 - dragState.duration / 60000, snappedMinutes));

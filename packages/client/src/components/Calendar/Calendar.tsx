@@ -274,6 +274,14 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
       } else if (e.key === 't' && !e.metaKey && !e.ctrlKey) {
         // Press 't' to go to today (like Google Calendar)
         handleToday();
+      } else if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
+        // Press 'c' to create a new event (like Google Calendar)
+        if (onTimeSlotClick) {
+          const now = new Date();
+          now.setMinutes(0, 0, 0);
+          now.setHours(now.getHours() + 1);
+          onTimeSlotClick(now);
+        }
       } else if (e.key === 'Escape' && (dragState || allDayDragState)) {
         // Cancel drag on Escape
         setDragState(null);
@@ -285,7 +293,7 @@ export function Calendar({ events, onEventClick, onTimeSlotClick, onEventDrop }:
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [dragState, allDayDragState]);
+  }, [dragState, allDayDragState, onTimeSlotClick]);
 
   // Drag-and-drop handlers
   const handleDragStart = useCallback((

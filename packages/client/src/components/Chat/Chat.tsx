@@ -4,11 +4,7 @@ import { ChatMessage } from './ChatMessage.js';
 import { ToolCallIndicator } from './ToolCallIndicator.js';
 import './Chat.css';
 
-interface ChatProps {
-  onEventCreated?: () => void;
-}
-
-export function Chat({ onEventCreated }: ChatProps): JSX.Element {
+export function Chat(): JSX.Element {
   const {
     messages,
     isLoading,
@@ -30,14 +26,6 @@ export function Chat({ onEventCreated }: ChatProps): JSX.Element {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isStreaming]);
-
-  // Notify parent when events are created
-  useEffect(() => {
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.events && lastMessage.events.length > 0) {
-      onEventCreated?.();
-    }
-  }, [messages, onEventCreated]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

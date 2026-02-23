@@ -150,19 +150,22 @@ export const checkConflicts = query({
       return { hasConflicts: false, conflicts: [] };
     }
 
-    // Get all events that could potentially conflict
-    // An event conflicts if it starts before our end AND ends after our start
-    const allUserEvents = await ctx.db
+    // Use the time index to narrow down candidate events.
+    // An event conflicts if it starts before our end AND ends after our start.
+    // The index filters to events starting before args.endTime; we then filter
+    // in memory for events that end after args.startTime.
+    const candidateEvents = await ctx.db
       .query("events")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user_and_time", (q) =>
+        q.eq("userId", userId).lt("startTime", args.endTime)
+      )
       .collect();
 
-    const conflicts = allUserEvents.filter((event) => {
+    const conflicts = candidateEvents.filter((event) => {
       if (args.excludeEventId && event._id === args.excludeEventId) {
         return false;
       }
-      // Overlap check: event.start < args.end AND event.end > args.start
-      return event.startTime < args.endTime && event.endTime > args.startTime;
+      return event.endTime > args.startTime;
     });
 
     return {

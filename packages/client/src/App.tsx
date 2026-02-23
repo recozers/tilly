@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useAuthContext } from './contexts/AuthContext.js';
 import { useEvents } from './hooks/useEvents.js';
+import { useToast } from './hooks/useToast.js';
 import { AuthModal } from './components/Auth/AuthModal.js';
 import { Calendar } from './components/Calendar/index.js';
 import { Chat } from './components/Chat/index.js';
@@ -57,7 +58,8 @@ interface UpdateEventData {
  */
 export default function App(): JSX.Element {
   const { user, isLoading: authLoading, isAuthenticated, signOut } = useAuthContext();
-  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, addExdateAndCreateException, refetch } = useEvents();
+  const { events, isLoading: eventsLoading, createEvent, updateEvent, deleteEvent, addExdateAndCreateException } = useEvents();
+  const { toasts, showToast } = useToast();
 
   // Modal state
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -82,19 +84,31 @@ export default function App(): JSX.Element {
 
   // Handle save event (create or update)
   const handleSaveEvent = useCallback(async (data: CreateEventData | UpdateEventData) => {
-    if (selectedEvent) {
-      // For recurring instances, use the original event ID
-      const eventId = selectedEvent.originalEventId ?? selectedEvent._id;
-      await updateEvent(eventId as Id<"events">, data as UpdateEventData);
-    } else {
-      await createEvent(data as CreateEventData);
+    try {
+      if (selectedEvent) {
+        const eventId = selectedEvent.originalEventId ?? selectedEvent._id;
+        await updateEvent(eventId as Id<"events">, data as UpdateEventData);
+        showToast('Event updated');
+      } else {
+        await createEvent(data as CreateEventData);
+        showToast('Event created');
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save event', 'error');
+      throw err;
     }
-  }, [selectedEvent, createEvent, updateEvent]);
+  }, [selectedEvent, createEvent, updateEvent, showToast]);
 
   // Handle delete event
   const handleDeleteEvent = useCallback(async (id: Id<"events"> | string) => {
-    await deleteEvent(id as Id<"events">);
-  }, [deleteEvent]);
+    try {
+      await deleteEvent(id as Id<"events">);
+      showToast('Event deleted');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete event', 'error');
+      throw err;
+    }
+  }, [deleteEvent, showToast]);
 
   // Handle drag-and-drop event reschedule
   const handleEventDrop = useCallback(async (
@@ -105,38 +119,41 @@ export default function App(): JSX.Element {
     originalEventId?: string,
     originalStartTime?: number,
   ) => {
-    if (isRecurringInstance && originalEventId && originalStartTime !== undefined) {
-      const editAll = window.confirm(
-        'Move all events in this series?\n\nOK = All events\nCancel = This event only'
-      );
+    try {
+      if (isRecurringInstance && originalEventId && originalStartTime !== undefined) {
+        const editAll = window.confirm(
+          'Move all events in this series?\n\nOK = All events\nCancel = This event only'
+        );
 
-      if (editAll) {
-        // Shift entire recurrence by the same delta
-        const delta = newStartTime - originalStartTime;
-        const parentEvent = events.find(e => e._id === originalEventId);
-        if (parentEvent) {
-          await updateEvent(originalEventId as Id<"events">, {
-            startTime: parentEvent.startTime + delta,
-            endTime: parentEvent.endTime + delta,
-            dtstart: (parentEvent.startTime + delta),
-          });
+        if (editAll) {
+          const delta = newStartTime - originalStartTime;
+          const parentEvent = events.find(e => e._id === originalEventId);
+          if (parentEvent) {
+            await updateEvent(originalEventId as Id<"events">, {
+              startTime: parentEvent.startTime + delta,
+              endTime: parentEvent.endTime + delta,
+              dtstart: (parentEvent.startTime + delta),
+            });
+          }
+        } else {
+          await addExdateAndCreateException(
+            originalEventId as Id<"events">,
+            originalStartTime,
+            newStartTime,
+            newEndTime,
+          );
         }
       } else {
-        // Move this instance only: exclude from parent + create standalone copy
-        await addExdateAndCreateException(
-          originalEventId as Id<"events">,
-          originalStartTime,
-          newStartTime,
-          newEndTime,
-        );
+        await updateEvent(eventId as Id<"events">, {
+          startTime: newStartTime,
+          endTime: newEndTime,
+        });
       }
-    } else {
-      await updateEvent(eventId as Id<"events">, {
-        startTime: newStartTime,
-        endTime: newEndTime,
-      });
+      showToast('Event moved');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to move event', 'error');
     }
-  }, [updateEvent, addExdateAndCreateException, events]);
+  }, [updateEvent, addExdateAndCreateException, events, showToast]);
 
   // Close modal
   const handleCloseModal = useCallback(() => {
@@ -144,11 +161,6 @@ export default function App(): JSX.Element {
     setSelectedEvent(null);
     setNewEventDate(null);
   }, []);
-
-  // Refresh events when chat creates new ones
-  const handleEventCreated = useCallback(() => {
-    refetch();
-  }, [refetch]);
 
   // Show auth modal if not authenticated
   if (!authLoading && !isAuthenticated) {
@@ -197,7 +209,7 @@ export default function App(): JSX.Element {
         </section>
 
         <aside className="chat-section">
-          <Chat onEventCreated={handleEventCreated} />
+          <Chat />
         </aside>
       </main>
 
@@ -212,6 +224,16 @@ export default function App(): JSX.Element {
       )}
 
       <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} initialTab={settingsTab} />
+
+      {toasts.length > 0 && (
+        <div className="toast-container">
+          {toasts.map(toast => (
+            <div key={toast.id} className={`toast toast-${toast.type}`}>
+              {toast.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

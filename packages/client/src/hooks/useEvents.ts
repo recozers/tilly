@@ -55,7 +55,6 @@ interface UseEventsReturn {
   updateEvent: (id: Id<"events">, dto: UpdateEventDto) => Promise<any>;
   deleteEvent: (id: Id<"events">) => Promise<void>;
   addExdateAndCreateException: (parentEventId: Id<"events">, excludedStartTime: number, newStartTime: number, newEndTime: number) => Promise<void>;
-  refetch: () => void;
 }
 
 /**
@@ -142,11 +141,6 @@ export function useEvents(): UseEventsReturn {
     });
   }, [addExdateMutation]);
 
-  // No need to manually refetch - Convex handles real-time updates
-  const refetch = useCallback(() => {
-    // No-op - Convex automatically keeps data in sync
-  }, []);
-
   return {
     events,
     isLoading: eventsData === undefined,
@@ -155,6 +149,5 @@ export function useEvents(): UseEventsReturn {
     updateEvent,
     deleteEvent,
     addExdateAndCreateException,
-    refetch,
   };
 }

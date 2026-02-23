@@ -2,8 +2,17 @@ import { mutation, internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-// Calendar colors
-const CALENDAR_COLORS = ["#4A7C2A", "#F4F1E8"] as const;
+// Calendar colors - matches the color picker options in EventModal
+const CALENDAR_COLORS = [
+  "#4A7C2A", // Green
+  "#2196F3", // Blue
+  "#9C27B0", // Purple
+  "#FF9800", // Orange
+  "#F44336", // Red
+  "#607D8B", // Gray
+  "#009688", // Teal
+  "#E91E63", // Pink
+] as const;
 
 function getRandomEventColor(): string {
   return CALENDAR_COLORS[Math.floor(Math.random() * CALENDAR_COLORS.length)];

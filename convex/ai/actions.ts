@@ -529,20 +529,27 @@ export const streamChat = httpAction(async (ctx, request) => {
         const reader = openaiResponse.body!.getReader();
         const decoder = new TextDecoder();
         let fullContent = "";
+        let sseBuffer = "";
         const toolCalls: Map<
           number,
           { id: string; function: { name: string; arguments: string } }
         > = new Map();
 
-        // Stream the response
+        // Stream the response, buffering partial SSE lines across chunks
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n").filter((l) => l.startsWith("data: "));
+          sseBuffer += decoder.decode(value, { stream: true });
 
-          for (const line of lines) {
+          // Process complete SSE events (terminated by double newline)
+          const events = sseBuffer.split("\n\n");
+          // Keep the last element as it may be an incomplete event
+          sseBuffer = events.pop() || "";
+
+          for (const event of events) {
+            const line = event.trim();
+            if (!line.startsWith("data: ")) continue;
             const data = line.slice(6);
             if (data === "[DONE]") continue;
 

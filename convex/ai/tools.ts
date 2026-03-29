@@ -28,7 +28,7 @@ export const CALENDAR_TOOLS = [
     type: "function" as const,
     function: {
       name: "create_event",
-      description: "Create a new calendar event. Always check for conflicts first. For all-day events, set all_day to true and use date-only format (YYYY-MM-DD) for start and end times. For recurring events, use the recurrence parameter.",
+      description: "Create a new calendar event. Conflicts are checked automatically and returned in the response. For all-day events, set all_day to true and use date-only format (YYYY-MM-DD) for start and end times. For recurring events, use the recurrence parameter.",
       parameters: {
         type: "object",
         properties: {

@@ -137,14 +137,13 @@ Upcoming Events (next 7 days):
 ${upcomingSummary || "No upcoming events."}
 
 Guidelines:
-1. When creating events, always check for conflicts first using check_time_conflicts.
+1. When creating events, just call create_event directly — it automatically checks for conflicts and returns them in the response. You do NOT need to call check_time_conflicts separately before creating. Only use check_time_conflicts if the user explicitly asks whether a time slot is free.
 2. Use the user's timezone for all time references.
 3. Be concise but friendly in your responses.
 4. When moving events, confirm the new time with the user.
 5. Always format times in a human-readable way.
-6. You can use multiple tools in sequence to complete complex tasks.
-7. If a task requires multiple steps, complete all steps before responding to the user.
-8. For all-day events (birthdays, holidays, deadlines without specific times), set all_day: true and use date-only format (YYYY-MM-DD) for start and end times. For single-day events, use the same date for both.
+6. Complete tasks in as few tool calls as possible. Avoid redundant or repeated tool calls.
+7. For all-day events (birthdays, holidays, deadlines without specific times), set all_day: true and use date-only format (YYYY-MM-DD) for start and end times. For single-day events, use the same date for both.
 
 Recurring Events:
 - When users ask for repeating/recurring events, use the recurrence parameter.
@@ -269,6 +268,12 @@ async function executeTool(
         endTime = parseLocalDateTime(args.end_time as string, timezone);
       }
 
+      // Automatically check for conflicts before creating
+      const conflictResult = await ctx.runQuery(api.events.queries.checkConflicts, {
+        startTime,
+        endTime,
+      });
+
       // Build recurrence rule if provided
       let rrule: string | undefined;
       let duration: number | undefined;
@@ -305,10 +310,19 @@ async function executeTool(
         eventResponse.recurrence = args.recurrence;
       }
 
+      type ConflictType = { _id: Id<"events">; title: string; startTime: number; endTime: number };
       return {
         data: {
           success: true,
           event: eventResponse,
+          conflicts: conflictResult.hasConflicts
+            ? conflictResult.conflicts.map((e: ConflictType) => ({
+                id: e._id,
+                title: e.title,
+                start: formatDate(e.startTime, timezone),
+                end: formatDate(e.endTime, timezone),
+              }))
+            : [],
         },
         event,
       };
@@ -469,9 +483,10 @@ export const streamChat = httpAction(async (ctx, request) => {
         { role: "user", content: message },
       ];
 
-      const maxIterations = 10;
+      const maxIterations = 5;
       let iteration = 0;
       let hasMoreToolCalls = true;
+      const recentToolCalls = new Set<string>();
 
       const openaiApiKey = process.env.OPENAI_API_KEY;
       if (!openaiApiKey) {
@@ -496,7 +511,7 @@ export const streamChat = httpAction(async (ctx, request) => {
               Authorization: `Bearer ${openaiApiKey}`,
             },
             body: JSON.stringify({
-              model: process.env.OPENAI_MODEL || "gpt-4o",
+              model: process.env.OPENAI_MODEL || "gpt-5.2",
               messages,
               temperature: 0.3,
               max_tokens: 2000,
@@ -572,6 +587,22 @@ export const streamChat = httpAction(async (ctx, request) => {
         );
 
         if (toolCallsArray.length > 0) {
+          // Detect repeated tool calls to prevent loops
+          const callSignatures = toolCallsArray.map(
+            (tc) => `${tc.function.name}:${tc.function.arguments}`
+          );
+          const allDuplicates = callSignatures.every((sig) =>
+            recentToolCalls.has(sig)
+          );
+          if (allDuplicates) {
+            // Model is repeating the same calls — break out of the loop
+            hasMoreToolCalls = false;
+            continue;
+          }
+          for (const sig of callSignatures) {
+            recentToolCalls.add(sig);
+          }
+
           // Add assistant message with tool calls
           messages.push({
             role: "assistant",

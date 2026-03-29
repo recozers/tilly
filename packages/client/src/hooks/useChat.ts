@@ -107,43 +107,57 @@ export function useChat(): UseChatReturn {
         const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
 
         for (const line of lines) {
+          const jsonStr = line.slice(6);
+          let data;
           try {
-            const data = JSON.parse(line.slice(6));
-
-            switch (data.type) {
-              case 'chunk':
-                fullContent += data.content;
-                setMessages(prev => prev.map(m =>
-                  m.id === assistantId
-                    ? { ...m, content: fullContent }
-                    : m
-                ));
-                break;
-
-              case 'event_created':
-                createdEvents.push(data.event);
-                break;
-
-              case 'done':
-                setMessages(prev => prev.map(m =>
-                  m.id === assistantId
-                    ? { ...m, isStreaming: false, events: createdEvents.length > 0 ? createdEvents : undefined }
-                    : m
-                ));
-                break;
-
-              case 'error':
-                throw new Error(data.message);
-            }
-          } catch (parseError) {
+            data = JSON.parse(jsonStr);
+          } catch {
             // Ignore parse errors for incomplete chunks
+            continue;
+          }
+
+          switch (data.type) {
+            case 'chunk':
+              fullContent += data.content;
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, content: fullContent }
+                  : m
+              ));
+              break;
+
+            case 'event_created':
+              createdEvents.push(data.event);
+              break;
+
+            case 'done':
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, isStreaming: false, events: createdEvents.length > 0 ? createdEvents : undefined }
+                  : m
+              ));
+              break;
+
+            case 'error':
+              throw new Error(data.message);
           }
         }
       }
+
+      // If stream ended without a 'done' event, finalize the message
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId && m.isStreaming
+          ? { ...m, isStreaming: false, events: createdEvents.length > 0 ? createdEvents : undefined }
+          : m
+      ));
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to send message'));
-      // Remove the failed assistant message
-      setMessages(prev => prev.filter(m => m.id !== `assistant-${messageId}`));
+      // Clear the failed assistant message's streaming state so UI doesn't get stuck
+      setMessages(prev => prev.map(m =>
+        m.id === `assistant-${messageId}`
+          ? { ...m, isStreaming: false, content: m.content || 'Sorry, something went wrong.' }
+          : m
+      ));
     } finally {
       setIsLoading(false);
     }

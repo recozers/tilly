@@ -514,7 +514,7 @@ export const streamChat = httpAction(async (ctx, request) => {
               model: process.env.OPENAI_MODEL || "gpt-5.2",
               messages,
               temperature: 0.3,
-              max_tokens: 2000,
+              max_completion_tokens: 2000,
               stream: true,
               tools: CALENDAR_TOOLS,
               tool_choice: "auto",
